@@ -44,12 +44,7 @@ def home():
     """Home endpoint"""
     return jsonify({
         "status": "running",
-        "message": "Telegram Webhook Listener is running",
-        "endpoints": {
-            "/": "Status endpoint",
-            "/logs": "View logs",
-            "/restart": "Restart the listener"
-        }
+        "message": "Listener is running"
     })
 
 @app.route('/logs')
