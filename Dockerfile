@@ -15,7 +15,8 @@ RUN npm ci --only=production
 
 # Copy Python requirements and install
 COPY requirements.txt .
-RUN pip3 install -r requirements.txt
+RUN python3 -m venv /opt/venv
+RUN . /opt/venv/bin/activate && pip install -r requirements.txt
 
 # Copy all application files
 COPY . .
@@ -36,4 +37,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:7860/health || exit 1
 
 # Start the Flask app which will run the Node.js listener
-CMD ["python3", "app.py"]
+CMD ["/opt/venv/bin/python", "app.py"]
