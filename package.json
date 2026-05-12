@@ -1,0 +1,26 @@
+{
+  "name": "telegram-listener",
+  "version": "1.0.0",
+  "description": "Simple Telegram group listener using teleproto",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [
+    "telegram",
+    "listener",
+    "teleproto"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.16.0",
+    "dotenv": "^16.0.0",
+    "teleproto": "^1.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}

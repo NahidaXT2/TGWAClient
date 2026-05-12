@@ -1,0 +1,3 @@
+teleproto
+axios
+python-dotenv
