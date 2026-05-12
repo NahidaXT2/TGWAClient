@@ -37,7 +37,7 @@ async function startListener() {
     }
 
     console.log('🚀 Starting Telegram listener...');
-    console.log(`📱 Target supergroup: ${GROUPS_IDS}`);
+    console.log(`📱 Targeted groups: ${GROUPS_IDS.length}`);
 
     const session = new StringSession(SESSION_STRING || '');
     const client = new TelegramClient(session, API_ID, API_HASH, {
