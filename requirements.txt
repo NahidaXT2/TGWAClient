@@ -1,3 +1,2 @@
-teleproto
-axios
+flask
 python-dotenv
