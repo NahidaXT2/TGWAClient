@@ -171,8 +171,13 @@ app.get('/wpp', (req, res) => {
 
 // QR Code endpoint
 app.get('/wpp/qr', (req, res) => {
+    console.log('📋 Petición recibida en /wpp/qr, QR disponible:', !!state.wppQRCode);
     if (!state.wppQRCode) {
-        return res.status(404).json({ error: 'QR code not available' });
+        return res.status(404).json({
+            error: 'QR code not available',
+            status: state.wppConnected ? 'connected' : 'disconnected',
+            message: 'Espera a que WPPConnect genere el código QR'
+        });
     }
     res.json({ qrCode: state.wppQRCode });
 });
@@ -364,6 +369,7 @@ async function initWPPConnect() {
             logV3: false,
             catchQR: (base64QR, asciiQR) => {
                 console.log('📱 QR Code recibido para escanear');
+                console.log('📱 Longitud del QR base64:', base64QR ? base64QR.length : 0);
                 state.wppQRCode = base64QR;
             },
             statusFind: (statusSession, session) => {
@@ -379,20 +385,24 @@ async function initWPPConnect() {
             },
         };
 
+        console.log("📋 Configuración de WPPConnect:", JSON.stringify(options, null, 2));
+
         // wppconnect usa create function para inicializar
-        await wpp.create(options);
+        console.log("📋 Llamando a wpp.create()...");
+        const client = await wpp.create(options);
+        console.log("✅ wpp.create() completado");
 
         // Escuchar eventos de mensajes entrantes
-        wpp.onMessage(async (message) => {
+        client.onMessage(async (message) => {
             try {
-                await handleWPPCommand(wpp, message);
+                await handleWPPCommand(client, message);
             } catch (error) {
                 console.error(`❌ [WPPConnect] Error en handler de mensaje: ${error.message}`);
             }
         });
 
         // Escuchar eventos de estado de la sesión
-        wpp.onStateChange((status) => {
+        client.onStateChange((status) => {
             console.log(`[WPPConnect] Cambio de estado: ${status}`);
         });
 
@@ -400,6 +410,7 @@ async function initWPPConnect() {
 
     } catch (error) {
         console.error(`❌ Error al iniciar WPPConnect: ${error.message}`);
+        console.error(`❌ Stack trace: ${error.stack}`);
         state.wppConnected = false;
     }
 }
