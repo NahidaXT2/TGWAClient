@@ -380,7 +380,7 @@ async function initWPPConnect() {
                 state.wppQRCode = base64QR;
             },
             statusFind: (statusSession, session) => {
-                if (statusSession === 'isLogged') {
+                if (statusSession === 'isLogged' || statusSession === 'CONNECTED') {
                     state.wppConnected = true;
                     state.wppQRCode = null;
 
