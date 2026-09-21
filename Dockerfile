@@ -14,7 +14,7 @@ RUN addgroup -g 1001 -S nodejs && \
 WORKDIR /app
 
 # Copia los archivos de configuración primero para aprovechar el caché de Docker
-COPY --chown=nodejs:nodejs package.json tsconfig.json ./
+COPY --chown=nodejs:nodejs package.json package-lock.json tsconfig.json ./
 
 # Instala las dependencias de Node.js
 RUN npm ci --only=production && \
