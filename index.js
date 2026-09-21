@@ -201,7 +201,7 @@ async function initWPPConnect() {
     try {
         console.log("🚀 Iniciando WPPConnect...");
 
-        const wpp = require('wppconnect');
+        const wpp = require('@wppconnect-team/wppconnect');
 
         const options = {
             session: WPP_SESSION_NAME,
