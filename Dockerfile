@@ -17,7 +17,7 @@ WORKDIR /app
 COPY --chown=nodejs:nodejs package.json package-lock.json tsconfig.json ./
 
 # Instala las dependencias de Node.js
-RUN npm ci --only=production && \
+RUN npm ci && \
     npm cache clean --force
 
 # Copia el código fuente
