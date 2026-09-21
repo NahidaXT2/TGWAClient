@@ -2,6 +2,8 @@ require('dotenv').config();
 
 const express = require('express');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 const { TelegramClient } = require('teleproto');
 const { StringSession } = require('teleproto/sessions');
 const { NewMessage } = require('teleproto/events');
@@ -128,6 +130,7 @@ client.addEventHandler(
 const state = {
     telegramConnected: false,
     wppConnected: false,
+    wppQRCode: null,
 };
 
 // ============================================================
@@ -162,7 +165,102 @@ app.get('/wpp', (req, res) => {
         service: 'WPPConnect (WhatsApp Web) — Bot de Comandos',
         connected: state.wppConnected,
         sessionName: WPP_SESSION_NAME,
+        hasQRCode: !!state.wppQRCode,
     });
+});
+
+// QR Code endpoint
+app.get('/wpp/qr', (req, res) => {
+    if (!state.wppQRCode) {
+        return res.status(404).json({ error: 'QR code not available' });
+    }
+    res.json({ qrCode: state.wppQRCode });
+});
+
+// QR Code page
+app.get('/wpp/qr-page', (req, res) => {
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Escanea el QR de WhatsApp</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #f5f5f5;
+        }
+        .container {
+            text-align: center;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        #qr-image {
+            max-width: 300px;
+            margin: 20px 0;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 5px;
+            background: #e7f3ff;
+        }
+        .instructions {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Vincular WhatsApp</h1>
+        <div id="qr-container">
+            <p>Cargando código QR...</p>
+        </div>
+        <div class="status" id="status">
+            Estado: Esperando QR...
+        </div>
+        <div class="instructions">
+            <p>1. Abre WhatsApp en tu teléfono</p>
+            <p>2. Ve a Menú → Aparatos vinculados → Vincular un aparato</p>
+            <p>3. Escanea el código QR</p>
+        </div>
+    </div>
+    <script>
+        function checkQR() {
+            fetch('/wpp/qr')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.qrCode) {
+                        document.getElementById('qr-container').innerHTML =
+                            '<img id="qr-image" src="' + data.qrCode + '" alt="QR Code">';
+                        document.getElementById('status').textContent = 'Estado: QR listo para escanear';
+                    } else {
+                        document.getElementById('status').textContent = 'Estado: Esperando QR...';
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('status').textContent = 'Estado: Error al cargar QR';
+                });
+        }
+
+        // Check for QR every 2 seconds
+        setInterval(checkQR, 2000);
+        checkQR();
+    </script>
+</body>
+</html>
+    `);
 });
 
 // ============================================================
@@ -195,6 +293,61 @@ async function handleWPPCommand(wpp, message) {
 }
 
 // ============================================================
+// Función: Enviar información de sesión a n8n
+// ============================================================
+async function sendSessionToN8N(session) {
+    try {
+        const webhookUrl = process.env.N8N_WEBHOOK_URL;
+        if (!webhookUrl) {
+            console.warn('⚠️ N8N_WEBHOOK_URL no configurado, no se enviará la sesión');
+            return;
+        }
+
+        // Intentar leer archivos de sesión de WPPConnect
+        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
+        let sessionFiles = {};
+
+        try {
+            if (fs.existsSync(tokenDir)) {
+                const files = fs.readdirSync(tokenDir);
+                for (const file of files) {
+                    const filePath = path.join(tokenDir, file);
+                    try {
+                        const content = fs.readFileSync(filePath, 'utf8');
+                        sessionFiles[file] = content;
+                    } catch (err) {
+                        console.warn(`⚠️ No se pudo leer el archivo ${file}: ${err.message}`);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn(`⚠️ No se pudo acceder a la carpeta de tokens: ${err.message}`);
+        }
+
+        const sessionData = {
+            type: 'wpp_session',
+            sessionName: WPP_SESSION_NAME,
+            timestamp: new Date().toISOString(),
+            status: 'connected',
+            tokenDirectory: tokenDir,
+            sessionFiles: sessionFiles,
+            note: 'Guarda el contenido de sessionFiles en tus secrets para persistir la sesión'
+        };
+
+        console.log('📤 Enviando información de sesión a n8n...');
+
+        const response = await axios.post(webhookUrl, sessionData, {
+            headers: { "Content-Type": "application/json" },
+            timeout: 10000,
+        });
+
+        console.log(`✅ Información de sesión enviada a n8n: ${response.status}`);
+    } catch (error) {
+        console.error(`❌ Error al enviar sesión a n8n: ${error.message}`);
+    }
+}
+
+// ============================================================
 // Función: Inicializar WPPConnect
 // ============================================================
 async function initWPPConnect() {
@@ -209,6 +362,21 @@ async function initWPPConnect() {
             logV1: false,
             logV2: false,
             logV3: false,
+            catchQR: (base64QR, asciiQR) => {
+                console.log('📱 QR Code recibido para escanear');
+                state.wppQRCode = base64QR;
+            },
+            statusFind: (statusSession, session) => {
+                console.log(`[WPPConnect] Estado de sesión: ${statusSession}`);
+                if (statusSession === 'isLogged') {
+                    state.wppConnected = true;
+                    state.wppQRCode = null;
+                    console.log("✅ WPPConnect conectado exitosamente");
+
+                    // Enviar información de sesión al webhook de n8n
+                    sendSessionToN8N(session);
+                }
+            },
         };
 
         // wppconnect usa create function para inicializar
@@ -224,12 +392,11 @@ async function initWPPConnect() {
         });
 
         // Escuchar eventos de estado de la sesión
-        wpp.onStateChange((state) => {
-            console.log(`[WPPConnect] Cambio de estado: ${state}`);
+        wpp.onStateChange((status) => {
+            console.log(`[WPPConnect] Cambio de estado: ${status}`);
         });
 
-        console.log("✅ WPPConnect iniciado y conectado");
-        state.wppConnected = true;
+        console.log("✅ WPPConnect iniciado");
 
     } catch (error) {
         console.error(`❌ Error al iniciar WPPConnect: ${error.message}`);
