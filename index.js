@@ -367,6 +367,27 @@ async function initWPPConnect() {
             logV1: false,
             logV2: false,
             logV3: false,
+            puppeteerOptions: {
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-gpu',
+                    '--disable-extensions',
+                    '--disable-default-apps',
+                    '--disable-translate',
+                    '--disable-sync',
+                    '--metrics-recording-only',
+                    '--disable-software-rasterizer',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                ],
+            },
             catchQR: (base64QR, asciiQR) => {
                 console.log('📱 QR Code recibido para escanear');
                 console.log('📱 Longitud del QR base64:', base64QR ? base64QR.length : 0);
