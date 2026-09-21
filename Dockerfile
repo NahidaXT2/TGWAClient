@@ -1,40 +1,44 @@
-# Use Node.js runtime as base
-FROM node:18-alpine
+# Usa una imagen base ligera de Node.js
+FROM node:lts-alpine
 
-# Install Python and pip for Flask app
-RUN apk add --no-cache python3 py3-pip
+# Instalar dependencias del sistema necesarias
+RUN apk add --no-cache dumb-init
 
-# Set working directory
+# Crear un usuario no root para mayor seguridad
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 && \
+    mkdir -p /app && \
+    chown -R nodejs:nodejs /app
+
+# Establece el directorio de trabajo
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copia los archivos de configuración primero para aprovechar el caché de Docker
+COPY --chown=nodejs:nodejs package.json tsconfig.json ./
 
-# Install Node.js dependencies
-RUN npm ci --only=production
+# Instala las dependencias de Node.js
+RUN npm ci --only=production && \
+    npm cache clean --force
 
-# Copy Python requirements and install
-COPY requirements.txt .
-RUN python3 -m venv /opt/venv
-RUN . /opt/venv/bin/activate && pip install -r requirements.txt
+# Copia el código fuente
+COPY --chown=nodejs:nodejs src ./src
 
-# Copy all application files
-COPY . .
+# Compila TypeScript
+RUN npm run build
 
-# Create non-root user for security
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
+# Copia los archivos compilados
+RUN cp -r dist dist_copy && \
+    rm -rf dist && \
+    mv dist_copy dist
 
-# Change ownership of the app directory
-RUN chown -R nodejs:nodejs /app
+# Cambiar al usuario no root
 USER nodejs
 
-# Expose port for Flask app
+# Expone el puerto 7860 (puerto por defecto de Hugging Face Spaces)
 EXPOSE 7860
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:7860/health || exit 1
+# Usa dumb-init para manejar señales correctamente
+ENTRYPOINT ["dumb-init", "--"]
 
-# Start the Flask app which will run the Node.js listener
-CMD ["/opt/venv/bin/python", "app.py"]
+# Comando para ejecutar la aplicación
+CMD ["node", "dist/index.js"]
