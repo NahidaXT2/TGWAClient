@@ -101,15 +101,6 @@ const client = new TelegramClient(
 // Handlers de eventos de Telegram
 // ============================================================
 
-// Handler de debug: todos los mensajes
-client.addEventHandler(
-    async (event) => {
-        const chatId = event.chatId;
-        console.log(`DEBUG [Telegram]: Mensaje recibido de chat ${chatId}`);
-    },
-    new NewMessage({})
-);
-
 // Handler principal: mensajes del grupo objetivo de Telegram
 client.addEventHandler(
     async (event) => {
@@ -171,7 +162,6 @@ app.get('/wpp', (req, res) => {
 
 // QR Code endpoint
 app.get('/wpp/qr', (req, res) => {
-    console.log('📋 Petición recibida en /wpp/qr, QR disponible:', !!state.wppQRCode);
     if (!state.wppQRCode) {
         return res.status(404).json({
             error: 'QR code not available',
@@ -357,8 +347,6 @@ async function sendSessionToN8N(session) {
 // ============================================================
 async function initWPPConnect() {
     try {
-        console.log("🚀 Iniciando WPPConnect...");
-
         const wpp = require('@wppconnect-team/wppconnect');
 
         const options = {
@@ -389,16 +377,12 @@ async function initWPPConnect() {
                 ],
             },
             catchQR: (base64QR, asciiQR) => {
-                console.log('📱 QR Code recibido para escanear');
-                console.log('📱 Longitud del QR base64:', base64QR ? base64QR.length : 0);
                 state.wppQRCode = base64QR;
             },
             statusFind: (statusSession, session) => {
-                console.log(`[WPPConnect] Estado de sesión: ${statusSession}`);
                 if (statusSession === 'isLogged') {
                     state.wppConnected = true;
                     state.wppQRCode = null;
-                    console.log("✅ WPPConnect conectado exitosamente");
 
                     // Enviar información de sesión al webhook de n8n
                     sendSessionToN8N(session);
@@ -406,12 +390,8 @@ async function initWPPConnect() {
             },
         };
 
-        console.log("📋 Configuración de WPPConnect:", JSON.stringify(options, null, 2));
-
         // wppconnect usa create function para inicializar
-        console.log("📋 Llamando a wpp.create()...");
         const client = await wpp.create(options);
-        console.log("✅ wpp.create() completado");
 
         // Escuchar eventos de mensajes entrantes
         client.onMessage(async (message) => {
@@ -427,11 +407,8 @@ async function initWPPConnect() {
             console.log(`[WPPConnect] Cambio de estado: ${status}`);
         });
 
-        console.log("✅ WPPConnect iniciado");
-
     } catch (error) {
         console.error(`❌ Error al iniciar WPPConnect: ${error.message}`);
-        console.error(`❌ Stack trace: ${error.stack}`);
         state.wppConnected = false;
     }
 }
