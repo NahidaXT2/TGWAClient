@@ -7,8 +7,8 @@ RUN apk add --no-cache \
     freetype \
     harfbuzz \
     ca-certificates \
-    ttf-fira \
-    ttf-fira-code \
+    fontconfig \
+    ttf-freefont \
     && mkdir -p /app
 
 WORKDIR /app
