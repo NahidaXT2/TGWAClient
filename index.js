@@ -261,49 +261,31 @@ app.get('/wpp/qr-page', (req, res) => {
 // ============================================================
 async function handleWPPCommand(wpp, message) {
     try {
-        console.log('🔧 Procesando comando:', message.body);
-
-        if (!message.body || message.type !== 'chat') {
-            console.log('⏭️ Mensaje no es chat o no tiene body');
-            return;
-        }
+        if (!message.body || message.type !== 'chat') return;
 
         // Solo procesar mensajes que empiecen con "/"
-        if (!message.body.startsWith('/')) {
-            console.log('⏭️ Mensaje no empieza con /');
-            return;
-        }
+        if (!message.body.startsWith('/')) return;
 
         // Extraer el nombre del comando (sin la barra inicial)
         const command = message.body.substring(1).split(' ')[0].toLowerCase();
-        console.log('🔍 Comando extraído:', command);
 
         // Buscar el comando en el diccionario
         const response = wppCommands[command];
 
         if (response) {
-            console.log('📤 Enviando respuesta:', response);
-            console.log('📤 Destino:', message.to || message.id.remote);
-
             try {
                 const sentMessage = await wpp.sendText(message.to || message.id.remote, response);
-                console.log('✅ Mensaje enviado:', sentMessage);
 
                 // Guardar el ID del mensaje enviado para evitar responder a nosotros mismos
                 if (sentMessage && sentMessage.id) {
                     state.lastBotMessageId = sentMessage.id;
-                    console.log('💾 ID del mensaje guardado:', sentMessage.id);
                 }
             } catch (sendError) {
-                console.error('❌ Error al enviar mensaje:', sendError.message);
-                console.error('❌ Stack:', sendError.stack);
+                console.error(`❌ [WPPConnect] Error al enviar mensaje: ${sendError.message}`);
             }
-        } else {
-            console.log('⏭️ Comando no encontrado:', command);
         }
     } catch (error) {
         console.error(`❌ [WPPConnect] Error al procesar comando: ${error.message}`);
-        console.error(`❌ Stack: ${error.stack}`);
     }
 }
 
@@ -416,19 +398,8 @@ async function initWPPConnect() {
         // Escuchar eventos de mensajes entrantes
         client.onMessage(async (message) => {
             try {
-                console.log('📩 Mensaje recibido:', {
-                    from: message.from,
-                    fromMe: message.fromMe,
-                    body: message.body,
-                    type: message.type,
-                    id: message.id,
-                    isGroupMsg: message.isGroupMsg,
-                    to: message.to
-                });
-
                 // Ignorar mensajes del propio bot para evitar bucles infinitos
                 if (message.fromMe && state.lastBotMessageId === message.id.id) {
-                    console.log('⏭️ Ignorando mensaje propio del bot');
                     return;
                 }
 
@@ -436,13 +407,9 @@ async function initWPPConnect() {
                 if (WPP_GROUP_ID) {
                     // Verificar que el mensaje sea del usuario (fromMe: true) y sea para el grupo correcto
                     if (message.fromMe && message.to === WPP_GROUP_ID) {
-                        console.log('✅ Mensaje propio del usuario en el grupo objetivo');
                         await handleWPPCommand(client, message);
                         return;
                     }
-
-                    // Si no es del usuario o no es para el grupo correcto, ignorar
-                    console.log('⏭️ Mensaje no cumple con los criterios del grupo');
                     return;
                 }
 
@@ -454,19 +421,15 @@ async function initWPPConnect() {
                     // Eliminar sufijos de dominio de WhatsApp
                     userNumber = userNumber.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
 
-                    console.log('🔍 Verificando número:', userNumber, 'vs', WPP_USER_NUMBER);
-
                     // Si es un mensaje de grupo, verificar si el remitente es el usuario autorizado
                     if (message.isGroupMsg || message.from.includes('@g.us')) {
                         // En grupos, verificar si el mensaje es del usuario autorizado
                         if (userNumber !== WPP_USER_NUMBER) {
-                            console.log('⏭️ Mensaje de grupo de usuario no autorizado');
                             return;
                         }
                     } else {
                         // En chat individual, verificar si es el usuario autorizado
                         if (userNumber !== WPP_USER_NUMBER) {
-                            console.log('⏭️ Mensaje de chat no autorizado');
                             return;
                         }
                     }
@@ -481,7 +444,7 @@ async function initWPPConnect() {
         // Escuchar también mensajes propios (para cuando te envías mensajes a ti mismo)
         client.onAck(async (ack) => {
             try {
-                console.log('📩 ACK recibido:', ack);
+                // Silencioso - no necesitamos logs de ACK
             } catch (error) {
                 console.error(`❌ [WPPConnect] Error en handler de ACK: ${error.message}`);
             }
@@ -495,20 +458,9 @@ async function initWPPConnect() {
                     return;
                 }
 
-                console.log('📩 Mensaje ANY recibido:', {
-                    from: message.from,
-                    fromMe: message.fromMe,
-                    body: message.body,
-                    type: message.type,
-                    id: message.id,
-                    isGroupMsg: message.isGroupMsg,
-                    to: message.to
-                });
-
                 // Si hay un grupo configurado, solo procesar mensajes del usuario en ese grupo
                 if (WPP_GROUP_ID) {
                     if (message.fromMe && message.to === WPP_GROUP_ID) {
-                        console.log('✅ Procesando comando del usuario en el grupo');
                         await handleWPPCommand(client, message);
                     }
                     return;
