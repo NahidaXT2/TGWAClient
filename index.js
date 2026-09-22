@@ -4,6 +4,7 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const WebSocket = require('ws');
 const { createClient } = require('@supabase/supabase-js');
 const { TelegramClient } = require('teleproto');
 const { StringSession } = require('teleproto/sessions');
@@ -40,7 +41,19 @@ const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || 'wpp-sessions';
 
 let supabase = null;
 if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
-    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        db: {
+            schema: 'public'
+        },
+        global: {
+            headers: {
+                'x-my-custom-header': 'my-app-name'
+            }
+        },
+        realtime: {
+            transport: WebSocket
+        }
+    });
 }
 
 // Diccionario de comandos de WhatsApp
