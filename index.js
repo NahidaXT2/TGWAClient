@@ -27,6 +27,7 @@ const TARGET_CHAT_ID = -1001713742924;
 // Configuración — WPPConnect (WhatsApp) — Sistema de Comandos
 // ============================================================
 const WPP_SESSION_NAME = process.env.WPP_SESSION_NAME || 'default';
+const WPP_USER_NUMBER = process.env.WPP_USER_NUMBER; // Número del usuario autorizado (opcional)
 
 // Diccionario de comandos de WhatsApp
 // Escribe el comando después de "/" y la respuesta que deseas enviar
@@ -117,6 +118,7 @@ const state = {
     telegramConnected: false,
     wppConnected: false,
     wppQRCode: null,
+    lastBotMessageId: null, // Para evitar bucles infinitos
 };
 
 // ============================================================
@@ -266,16 +268,15 @@ async function handleWPPCommand(wpp, message) {
         // Extraer el nombre del comando (sin la barra inicial)
         const command = message.body.substring(1).split(' ')[0].toLowerCase();
 
-        console.log(`[WPPConnect] Comando recibido: /${command}`);
-
         // Buscar el comando en el diccionario
         const response = wppCommands[command];
 
         if (response) {
-            await wpp.sendText(message.id.remote, response);
-            console.log(`[WPPConnect] Respuesta enviada: ${response.substring(0, 50)}`);
-        } else {
-            console.log(`[WPPConnect] Comando no encontrado: /${command}`);
+            const sentMessage = await wpp.sendText(message.id.remote, response);
+            // Guardar el ID del mensaje enviado para evitar responder a nosotros mismos
+            if (sentMessage && sentMessage.id) {
+                state.lastBotMessageId = sentMessage.id;
+            }
         }
     } catch (error) {
         console.error(`❌ [WPPConnect] Error al procesar comando: ${error.message}`);
@@ -391,6 +392,19 @@ async function initWPPConnect() {
         // Escuchar eventos de mensajes entrantes
         client.onMessage(async (message) => {
             try {
+                // Ignorar mensajes del propio bot para evitar bucles infinitos
+                if (message.fromMe && state.lastBotMessageId === message.id.id) {
+                    return;
+                }
+
+                // Si hay un número de usuario configurado, solo responder a ese número
+                if (WPP_USER_NUMBER) {
+                    const userNumber = message.from.replace('@c.us', '').replace('@s.whatsapp.net', '');
+                    if (userNumber !== WPP_USER_NUMBER) {
+                        return;
+                    }
+                }
+
                 await handleWPPCommand(client, message);
             } catch (error) {
                 console.error(`❌ [WPPConnect] Error en handler de mensaje: ${error.message}`);
