@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const axios = require('axios');
+const WebSocket = require('ws');
 const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const { createClient } = require('@supabase/supabase-js');
 const { TelegramClient } = require('teleproto');
