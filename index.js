@@ -504,6 +504,17 @@ async function initWPPConnect() {
         console.log('🔍 [WPPConnect] Iniciando con token store de Supabase...');
         console.log('🔍 [WPPConnect] TokenStore configurado:', !!supabaseTokenStore);
         console.log('🔍 [WPPConnect] Supabase cliente configurado:', !!supabase);
+        
+        // Intentar recuperar el token guardado manualmente
+        console.log('🔍 [WPPConnect] Intentando recuperar token guardado de Supabase...');
+        const savedToken = await supabaseTokenStore.getToken(WPP_SESSION_NAME);
+        
+        if (savedToken) {
+            console.log('✅ [WPPConnect] Token recuperado exitosamente, se usará para restaurar sesión');
+        } else {
+            console.log('ℹ️ [WPPConnect] No hay token guardado, se requerirá escanear QR');
+        }
+        
         const wpp = require('@wppconnect-team/wppconnect');
 
         const options = {
@@ -513,6 +524,8 @@ async function initWPPConnect() {
             logV1: false,
             logV2: false,
             logV3: false,
+            // Usar el token recuperado si existe
+            sessionToken: savedToken || undefined,
             puppeteerOptions: {
                 executablePath: '/usr/bin/chromium-browser',
                 args: [
@@ -549,7 +562,7 @@ async function initWPPConnect() {
                     
                     // Guardar explícitamente el token después de conectar exitosamente
                     try {
-                        const tokenData = await client.getSessionTokenBrowser();
+                        const tokenData = await session.getSessionTokenBrowser();
                         if (tokenData && isValidSessionToken(tokenData)) {
                             console.log(`💾 [WPPConnect] Guardando token del navegador para sesión ${WPP_SESSION_NAME}`);
                             const saved = await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
