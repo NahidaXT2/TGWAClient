@@ -1,16 +1,5 @@
 FROM node:20-alpine
 
-# Dependencias de sistema para Puppeteer/Chromium (requerido por wppconnect)
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    harfbuzz \
-    ca-certificates \
-    fontconfig \
-    ttf-freefont \
-    && mkdir -p /app
-
 WORKDIR /app
 
 COPY package*.json ./
