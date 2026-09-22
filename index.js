@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const WebSocket = require('ws');
+const qrcode = require('qrcode-terminal');
 const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const { createClient } = require('@supabase/supabase-js');
 const { TelegramClient } = require('teleproto');
@@ -158,7 +159,7 @@ async function initWhatsApp() {
             // Manejar QR cuando está disponible
             if (qr) {
                 console.log('📷 [WhatsApp] QR disponible - escanéalo con tu teléfono:');
-                console.log(qr);
+                qrcode.generate(qr, { small: true });
             }
         });
 
