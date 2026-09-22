@@ -358,6 +358,7 @@ const state = {
     lastBotMessageId: null,
     wppClient: null,
     wppUserDataDir: null,
+    wppRestartCount: 0,
 };
 
 // ============================================================
@@ -551,6 +552,42 @@ async function initWPPConnect() {
                     uploadUserProfile(WPP_SESSION_NAME, userDataDir).catch(err => {
                         console.error(`❌ [WPPConnect] Error al subir perfil en statusFind: ${err.message}`);
                     });
+                } else if (statusSession === 'disconnectedMobile' || statusSession === 'UNPAIRED' || statusSession === 'Session Unpaired') {
+                    console.warn('⚠️ [WPPConnect] Sesión no emparejada. El perfil guardado es inválido.');
+
+                    // Prevenir bucle infinito de reinicios
+                    if (state.wppRestartCount >= 2) {
+                        console.error('❌ [WPPConnect] Demasiados reinicios. Abortando y requiriendo intervención manual.');
+                        console.log('📋 [WPPConnect] Por favor, elimina manualmente el perfil de Supabase y reinicia la aplicación.');
+                        return;
+                    }
+
+                    state.wppRestartCount++;
+                    console.log('🔄 [WPPConnect] Eliminando perfil local y de Supabase para forzar nueva autenticación...');
+
+                    // Eliminar perfil local
+                    if (fs.existsSync(userDataDir)) {
+                        fs.rmSync(userDataDir, { recursive: true, force: true });
+                        console.log('🗑️ [WPPConnect] Perfil local eliminado');
+                    }
+
+                    // Eliminar perfil de Supabase
+                    if (supabase) {
+                        supabase.storage
+                            .from(SUPABASE_BUCKET)
+                            .remove([`${WPP_SESSION_NAME}.zip`])
+                            .then(({ error }) => {
+                                if (error) {
+                                    console.error(`❌ [WPPConnect] Error al eliminar perfil de Supabase: ${error.message}`);
+                                } else {
+                                    console.log('🗑️ [WPPConnect] Perfil eliminado de Supabase');
+                                }
+                            });
+                    }
+
+                    // Reiniciar WPPConnect con perfil nuevo
+                    console.log('🔄 [WPPConnect] Reiniciando WPPConnect con perfil nuevo...');
+                    setTimeout(() => initWPPConnect(), 2000);
                 }
             },
         };
