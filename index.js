@@ -501,6 +501,12 @@ async function initWPPConnect() {
         // Matar procesos Chrome zombies antes de iniciar
         await killZombieChromeProcesses();
 
+        // Si el userDataDir ya existe localmente, eliminarlo para asegurar un inicio limpio
+        if (fs.existsSync(userDataDir)) {
+            console.log('🧹 [WPPConnect] Eliminando userDataDir local existente para inicio limpio...');
+            fs.rmSync(userDataDir, { recursive: true, force: true });
+        }
+
         // Descargar perfil desde Supabase si existe
         const profileRestored = await downloadUserProfile(WPP_SESSION_NAME);
         if (profileRestored) {
