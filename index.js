@@ -73,8 +73,6 @@ function isValidSessionToken(token) {
 
     if (!isValid) {
         console.warn('⚠️ [TokenStore] Token no tiene todos los campos requeridos o están vacíos');
-        console.warn('⚠️ [TokenStore] Campos requeridos:', requiredAttributes);
-        console.warn('⚠️ [TokenStore] Token recibido:', JSON.stringify(token, null, 2));
     }
 
     return isValid;
@@ -83,49 +81,35 @@ function isValidSessionToken(token) {
 // ============================================================
 // TokenStore personalizado para Supabase
 // ============================================================
-
 const supabaseTokenStore = {
     getToken: async (sessionName) => {
         try {
             console.log(`🔍 [TokenStore] getToken llamado para: ${sessionName}`);
-            console.log(`🔍 [TokenStore] Timestamp: ${new Date().toISOString()}`);
             
-            if (!supabase) {
-                console.warn('⚠️ [TokenStore] Supabase no configurado');
-                return undefined;
-            }
+            if (!supabase) return undefined;
 
             const fileName = `${sessionName}_token.json`;
-            console.log(`🔍 [TokenStore] Buscando archivo: ${fileName} en bucket: ${SUPABASE_BUCKET}`);
-            
             const { data, error } = await supabase.storage
                 .from(SUPABASE_BUCKET)
                 .download(fileName);
 
             if (error) {
                 console.log(`ℹ️ [TokenStore] No hay sesión guardada para ${sessionName}: ${error.message}`);
-                console.log(`ℹ️ [TokenStore] Error code: ${error?.statusCode || 'unknown'}`);
                 return undefined;
             }
 
-            console.log(`📥 [TokenStore] Archivo encontrado, parsing contenido...`);
             const content = await data.text();
-            console.log(`📥 [TokenStore] Tamaño del contenido: ${content.length} bytes`);
             const tokenData = JSON.parse(content);
             
-            // Validar el token antes de retornarlo
             if (!isValidSessionToken(tokenData)) {
                 console.error(`❌ [TokenStore] Token recuperado no es válido para ${sessionName}`);
                 return undefined;
             }
 
             console.log(`✅ [TokenStore] Sesión restaurada desde Supabase para ${sessionName}`);
-            console.log(`✅ [TokenStore] Campos del token:`, Object.keys(tokenData).join(', '));
-            console.log(`✅ [TokenStore] Contenido del token recuperado:`, JSON.stringify(tokenData, null, 2));
             return tokenData;
         } catch (error) {
             console.error(`❌ [TokenStore] Error al obtener token de Supabase: ${error.message}`);
-            console.error(`❌ [TokenStore] Stack trace:`, error.stack);
             return undefined;
         }
     },
@@ -133,15 +117,9 @@ const supabaseTokenStore = {
     setToken: async (sessionName, tokenData) => {
         try {
             console.log(`💾 [TokenStore] setToken llamado para: ${sessionName}`);
-            console.log(`� [TokenStore] Timestamp: ${new Date().toISOString()}`);
-            console.log(`�📊 [TokenStore] Tamaño del token: ${JSON.stringify(tokenData).length} bytes`);
             
-            if (!supabase) {
-                console.warn('⚠️ [TokenStore] Supabase no configurado');
-                return false;
-            }
+            if (!supabase) return false;
 
-            // Validar el token antes de guardarlo
             if (!isValidSessionToken(tokenData)) {
                 console.error(`❌ [TokenStore] Intentando guardar token inválido para ${sessionName}`);
                 return false;
@@ -151,38 +129,25 @@ const supabaseTokenStore = {
             const content = JSON.stringify(tokenData);
             const fileBuffer = Buffer.from(content);
 
-            console.log(`📤 [TokenStore] Subiendo archivo: ${fileName} a bucket: ${SUPABASE_BUCKET}`);
-            console.log(`📤 [TokenStore] Campos a guardar:`, Object.keys(tokenData).join(', '));
-            console.log(`📤 [TokenStore] Tamaño del buffer: ${fileBuffer.length} bytes`);
-
-            const { data, error } = await supabase.storage
+            const { error } = await supabase.storage
                 .from(SUPABASE_BUCKET)
-                .upload(fileName, fileBuffer, {
-                    upsert: true
-                });
+                .upload(fileName, fileBuffer, { upsert: true });
 
             if (error) {
                 console.error(`❌ [TokenStore] Error al guardar token en Supabase: ${error.message}`);
-                console.error(`❌ [TokenStore] Error code: ${error?.statusCode || 'unknown'}`);
-                console.error(`❌ [TokenStore] Detalles del error:`, error);
                 return false;
             }
 
             console.log(`✅ [TokenStore] Sesión guardada en Supabase para ${sessionName}`);
-            console.log(`✅ [TokenStore] Archivo guardado: ${data.path}`);
-            console.log(`✅ [TokenStore] Upload ID: ${data?.id || 'N/A'}`);
             return true;
         } catch (error) {
             console.error(`❌ [TokenStore] Error en setToken: ${error.message}`);
-            console.error(`❌ [TokenStore] Stack trace:`, error.stack);
             return false;
         }
     },
 
     removeToken: async (sessionName) => {
         try {
-            console.log(`🗑️ [TokenStore] removeToken llamado para: ${sessionName}`);
-            
             if (!supabase) return false;
 
             const fileName = `${sessionName}_token.json`;
@@ -205,34 +170,24 @@ const supabaseTokenStore = {
 
     listTokens: async () => {
         try {
-            console.log(`📋 [TokenStore] listTokens llamado`);
-            
             if (!supabase) return [];
 
             const { data: files, error } = await supabase.storage
                 .from(SUPABASE_BUCKET)
                 .list();
 
-            if (error) {
-                console.error(`❌ [TokenStore] Error al listar tokens: ${error.message}`);
-                return [];
-            }
+            if (error) return [];
 
-            const tokenFiles = files
+            return files
                 .filter(file => file.name.endsWith('_token.json'))
                 .map(file => file.name.replace('_token.json', ''));
-
-            console.log(`📋 [TokenStore] Tokens encontrados: ${tokenFiles.join(', ')}`);
-            return tokenFiles;
         } catch (error) {
-            console.error(`❌ [TokenStore] Error en listTokens: ${error.message}`);
             return [];
         }
     }
 };
 
 // Diccionario de comandos de WhatsApp
-// Escribe el comando después de "/" y la respuesta que deseas enviar
 const wppCommands = {
     'hola': '🤖 Hola!',
     'comandos': '🤖 Comandos disponibles:\n/hola - Saludo\n/comandos - Lista de comandos',
@@ -246,7 +201,6 @@ const missingVars = requiredVars.filter((varName) => !process.env[varName]);
 
 if (missingVars.length > 0) {
     console.error(`❌ Faltan las siguientes variables de entorno: ${missingVars.join(', ')}`);
-    console.error("Por favor, configura tu archivo .env con los valores necesarios.");
     process.exit(1);
 }
 
@@ -269,14 +223,10 @@ async function processMessage(messageText, source, extraData = {}) {
                 ...extraData,
             };
 
-            try {
-                const response = await axios.post(N8N_WEBHOOK_URL, payload, {
-                    headers: { "Content-Type": "application/json" },
-                    timeout: 10000,
-                });
-            } catch (webhookError) {
-                console.error(`❌ [${source}] Error al enviar al webhook de n8n: ${webhookError.message}`);
-            }
+            await axios.post(N8N_WEBHOOK_URL, payload, {
+                headers: { "Content-Type": "application/json" },
+                timeout: 10000,
+            });
         }
     } catch (error) {
         console.error(`❌ [${source}] Error procesando mensaje: ${error.message}`);
@@ -290,16 +240,9 @@ const client = new TelegramClient(
     new StringSession(SESSION_STR),
     API_ID,
     API_HASH,
-    {
-        connectionRetries: 5,
-    }
+    { connectionRetries: 5 }
 );
 
-// ============================================================
-// Handlers de eventos de Telegram
-// ============================================================
-
-// Handler principal: mensajes del grupo objetivo de Telegram
 client.addEventHandler(
     async (event) => {
         const messageText = event.message.message || "";
@@ -308,9 +251,7 @@ client.addEventHandler(
             senderId: event.senderId,
         });
     },
-    new NewMessage({
-        chats: [TARGET_CHAT_ID],
-    })
+    new NewMessage({ chats: [TARGET_CHAT_ID] })
 );
 
 // ============================================================
@@ -320,7 +261,7 @@ const state = {
     telegramConnected: false,
     wppConnected: false,
     wppQRCode: null,
-    lastBotMessageId: null, // Para evitar bucles infinitos
+    lastBotMessageId: null,
 };
 
 // ============================================================
@@ -328,7 +269,6 @@ const state = {
 // ============================================================
 const app = express();
 
-// Status general
 app.get('/', (req, res) => {
     res.json({
         status: 'ok',
@@ -338,7 +278,6 @@ app.get('/', (req, res) => {
     });
 });
 
-// Status de Telegram
 app.get('/telegram', (req, res) => {
     res.json({
         status: state.telegramConnected ? 'connected' : 'disconnected',
@@ -348,7 +287,6 @@ app.get('/telegram', (req, res) => {
     });
 });
 
-// Status de WPPConnect
 app.get('/wpp', (req, res) => {
     res.json({
         status: state.wppConnected ? 'connected' : 'disconnected',
@@ -359,7 +297,6 @@ app.get('/wpp', (req, res) => {
     });
 });
 
-// QR Code endpoint
 app.get('/wpp/qr', (req, res) => {
     if (!state.wppQRCode) {
         return res.status(404).json({
@@ -371,7 +308,6 @@ app.get('/wpp/qr', (req, res) => {
     res.json({ qrCode: state.wppQRCode });
 });
 
-// QR Code page
 app.get('/wpp/qr-page', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -380,53 +316,22 @@ app.get('/wpp/qr-page', (req, res) => {
     <title>Escanea el QR de WhatsApp</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            background: #f5f5f5;
-        }
-        .container {
-            text-align: center;
-            padding: 20px;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
+        body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+        .container { text-align: center; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1 { color: #333; }
-        #qr-image {
-            max-width: 300px;
-            margin: 20px 0;
-        }
-        .status {
-            margin-top: 20px;
-            padding: 10px;
-            border-radius: 5px;
-            background: #e7f3ff;
-        }
-        .instructions {
-            margin-top: 20px;
-            font-size: 14px;
-            color: #666;
-        }
+        #qr-image { max-width: 300px; margin: 20px 0; }
+        .status { margin-top: 20px; padding: 10px; border-radius: 5px; background: #e7f3ff; }
+        .instructions { margin-top: 20px; font-size: 14px; color: #666; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>📱 Vincular WhatsApp</h1>
-        <div id="qr-container">
-            <p>Cargando código QR...</p>
-        </div>
-        <div class="status" id="status">
-            Estado: Esperando QR...
-        </div>
+        <div id="qr-container"><p>Cargando código QR...</p></div>
+        <div class="status" id="status">Estado: Esperando QR...</div>
         <div class="instructions">
             <p>1. Abre WhatsApp en tu teléfono</p>
-            <p>2. Ve a Menú → Aparatos vinculados → Vincular un aparato</p>
+            <p>2. Ve a Menú → Dispositivos vinculados → Vincular un dispositivo</p>
             <p>3. Escanea el código QR</p>
         </div>
     </div>
@@ -436,19 +341,16 @@ app.get('/wpp/qr-page', (req, res) => {
                 .then(response => response.json())
                 .then(data => {
                     if (data.qrCode) {
-                        document.getElementById('qr-container').innerHTML =
-                            '<img id="qr-image" src="' + data.qrCode + '" alt="QR Code">';
+                        document.getElementById('qr-container').innerHTML = '<img id="qr-image" src="' + data.qrCode + '" alt="QR Code">';
                         document.getElementById('status').textContent = 'Estado: QR listo para escanear';
                     } else {
                         document.getElementById('status').textContent = 'Estado: Esperando QR...';
                     }
                 })
-                .catch(err => {
+                .catch(() => {
                     document.getElementById('status').textContent = 'Estado: Error al cargar QR';
                 });
         }
-
-        // Check for QR every 2 seconds
         setInterval(checkQR, 2000);
         checkQR();
     </script>
@@ -463,26 +365,15 @@ app.get('/wpp/qr-page', (req, res) => {
 async function handleWPPCommand(wpp, message) {
     try {
         if (!message.body || message.type !== 'chat') return;
-
-        // Solo procesar mensajes que empiecen con "/"
         if (!message.body.startsWith('/')) return;
 
-        // Extraer el nombre del comando (sin la barra inicial)
         const command = message.body.substring(1).split(' ')[0].toLowerCase();
-
-        // Buscar el comando en el diccionario
         const response = wppCommands[command];
 
         if (response) {
-            try {
-                const sentMessage = await wpp.sendText(message.to || message.id.remote, response);
-
-                // Guardar el ID del mensaje enviado para evitar responder a nosotros mismos
-                if (sentMessage && sentMessage.id) {
-                    state.lastBotMessageId = sentMessage.id;
-                }
-            } catch (sendError) {
-                console.error(`❌ [WPPConnect] Error al enviar mensaje: ${sendError.message}`);
+            const sentMessage = await wpp.sendText(message.to || message.id.remote, response);
+            if (sentMessage && sentMessage.id) {
+                state.lastBotMessageId = sentMessage.id;
             }
         }
     } catch (error) {
@@ -490,15 +381,8 @@ async function handleWPPCommand(wpp, message) {
     }
 }
 
-
-
 // ============================================================
-// NOTA: Las funciones de subida/descarga manual de archivos han sido removidas
-// El TokenStore de Supabase maneja automáticamente la persistencia de sesiones
-// ============================================================
-
-// ============================================================
-// Función: Descargar archivos de sesión de WPPConnect desde Supabase
+// Función: Descargar archivos de sesión desde Supabase
 // ============================================================
 async function downloadWPPSessionFiles() {
     try {
@@ -508,25 +392,18 @@ async function downloadWPPSessionFiles() {
         }
 
         const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
-
-        // Crear carpeta si no existe
         if (!fs.existsSync(tokenDir)) {
             fs.mkdirSync(tokenDir, { recursive: true });
         }
 
-        console.log('� [WPPConnect] Descargando archivos de sesión desde Supabase...');
+        console.log('🔍 [WPPConnect] Descargando archivos de sesión desde Supabase...');
 
         const { data: files, error } = await supabase.storage
             .from(SUPABASE_BUCKET)
             .list(WPP_SESSION_NAME);
 
-        if (error) {
-            console.error('❌ [WPPConnect] Error al listar archivos:', error.message);
-            return false;
-        }
-
-        if (!files || files.length === 0) {
-            console.log('ℹ️ [WPPConnect] No hay archivos de sesión en Supabase');
+        if (error || !files || files.length === 0) {
+            console.log('ℹ️ [WPPConnect] No hay archivos de sesión guardados en Supabase');
             return false;
         }
 
@@ -539,20 +416,16 @@ async function downloadWPPSessionFiles() {
                 .from(SUPABASE_BUCKET)
                 .download(fileName);
 
-            if (downloadError) {
-                console.error(`❌ [WPPConnect] Error al descargar ${file.name}:`, downloadError.message);
-                continue;
-            }
+            if (downloadError) continue;
 
             const filePath = path.join(tokenDir, file.name);
             const buffer = Buffer.from(await fileData.arrayBuffer());
             fs.writeFileSync(filePath, buffer);
-            console.log(`✅ [WPPConnect] ${file.name} descargado`);
             downloadedCount++;
         }
 
         console.log(`✅ [WPPConnect] Sesión restaurada desde Supabase (${downloadedCount} archivos)`);
-        return true;
+        return downloadedCount > 0;
     } catch (error) {
         console.error(`❌ [WPPConnect] Error al descargar sesión: ${error.message}`);
         return false;
@@ -560,59 +433,34 @@ async function downloadWPPSessionFiles() {
 }
 
 // ============================================================
-// Función: Subir archivos de sesión de WPPConnect a Supabase
+// Función: Subir archivos de sesión a Supabase
 // ============================================================
 async function uploadWPPSessionFiles() {
     try {
-        if (!supabase) {
-            console.warn('⚠️ Supabase no configurado, no se guardará la sesión');
-            return;
-        }
+        if (!supabase) return;
 
-        // WPPConnect guarda los archivos en /app/tokens/{sessionName}
         const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
-        
-        console.log(`🔍 [WPPConnect] Buscando archivos de sesión en: ${tokenDir}`);
-
-        if (!fs.existsSync(tokenDir)) {
-            console.warn(`⚠️ [WPPConnect] Directorio no existe: ${tokenDir}`);
-            return;
-        }
+        if (!fs.existsSync(tokenDir)) return;
 
         const files = fs.readdirSync(tokenDir);
-        console.log(`📂 [WPPConnect] Archivos encontrados: ${files.join(', ')}`);
-
-        if (files.length === 0) {
-            console.warn('⚠️ [WPPConnect] No hay archivos para subir');
-            return;
-        }
+        if (files.length === 0) return;
 
         let uploadedCount = 0;
         for (const file of files) {
             const filePath = path.join(tokenDir, file);
 
             try {
-                if (!fs.statSync(filePath).isFile()) {
-                    continue;
-                }
+                if (!fs.statSync(filePath).isFile()) continue;
 
                 const fileBuffer = fs.readFileSync(filePath);
                 const fileName = `${WPP_SESSION_NAME}/${file}`;
 
-                const { data, error } = await supabase.storage
+                const { error } = await supabase.storage
                     .from(SUPABASE_BUCKET)
-                    .upload(fileName, fileBuffer, {
-                        upsert: true
-                    });
+                    .upload(fileName, fileBuffer, { upsert: true });
 
-                if (error) {
-                    console.error(`❌ [WPPConnect] Error al subir ${file}:`, error.message);
-                } else {
-                    console.log(`✅ [WPPConnect] ${file} subido correctamente`);
-                    uploadedCount++;
-                }
-            } catch (fileError) {
-                console.warn(`⚠️ [WPPConnect] Omitiendo ${file}: ${fileError.message}`);
+                if (!error) uploadedCount++;
+            } catch {
                 continue;
             }
         }
@@ -628,30 +476,21 @@ async function uploadWPPSessionFiles() {
 // ============================================================
 async function initWPPConnect() {
     try {
-        console.log('🔍 [WPPConnect] Iniciando con sistema de archivos de Supabase...');
+        console.log('🔍 [WPPConnect] Iniciando servicio...');
         console.log('🔍 [WPPConnect] Supabase cliente configurado:', !!supabase);
-        
-        // Descargar archivos de sesión antes de iniciar
-        console.log('🔍 [WPPConnect] Intentando recuperar archivos de sesión de Supabase...');
-        const sessionRestored = await downloadWPPSessionFiles();
-        
-        if (sessionRestored) {
-            console.log('✅ [WPPConnect] Archivos de sesión restaurados, intentando conectar sin QR');
-        } else {
-            console.log('ℹ️ [WPPConnect] No hay archivos de sesión guardados, se requerirá escanear QR');
-        }
-        
+
+        await downloadWPPSessionFiles();
+
         const wpp = require('@wppconnect-team/wppconnect');
 
         const options = {
             session: WPP_SESSION_NAME,
+            folderNameToken: 'tokens',
             headless: true,
-            logQR: false, // Deshabilitar QR ASCII en consola
+            logQR: false,
             logV1: false,
             logV2: false,
             logV3: false,
-            // Usar el token recuperado si existe
-            sessionToken: savedToken || undefined,
             puppeteerOptions: {
                 executablePath: '/usr/bin/chromium-browser',
                 args: [
@@ -674,80 +513,46 @@ async function initWPPConnect() {
                     '--disable-renderer-backgrounding',
                 ],
             },
-            // Usar el token store personalizado de Supabase
             tokenStore: supabaseTokenStore,
-            catchQR: (base64QR, asciiQR) => {
+            catchQR: (base64QR) => {
                 state.wppQRCode = base64QR;
             },
             statusFind: async (statusSession, session) => {
                 console.log(`📊 [WPPConnect] statusFind: ${statusSession}`);
-                if (statusSession === 'isLogged' || statusSession === 'CONNECTED' || statusSession === 'qrReadSuccess') {
+                if (['isLogged', 'CONNECTED', 'qrReadSuccess'].includes(statusSession)) {
                     state.wppConnected = true;
                     state.wppQRCode = null;
-                    console.log('✅ [WPPConnect] Sesión conectada, guardando token explícitamente en Supabase...');
-                    
-                    // Guardar explícitamente el token después de conectar exitosamente
+
                     try {
                         const tokenData = await session.getSessionTokenBrowser();
                         if (tokenData && isValidSessionToken(tokenData)) {
-                            console.log(`💾 [WPPConnect] Guardando token del navegador para sesión ${WPP_SESSION_NAME}`);
-                            const saved = await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
-                            if (saved) {
-                                console.log(`✅ [WPPConnect] Token guardado exitosamente en Supabase`);
-                            } else {
-                                console.error(`❌ [WPPConnect] Error al guardar token en Supabase`);
-                            }
-                        } else {
-                            console.warn(`⚠️ [WPPConnect] Token del navegador no válido o null`);
+                            await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
                         }
-                    } catch (error) {
-                        console.error(`❌ [WPPConnect] Error al obtener token del navegador: ${error.message}`);
+                    } catch (e) {
+                        console.error(`❌ Error recuperando token de navegador: ${e.message}`);
                     }
+
+                    await uploadWPPSessionFiles();
                 }
             },
         };
 
-        // wppconnect usa create function para inicializar
         const client = await wpp.create(options);
 
-        // Escuchar eventos de mensajes entrantes
         client.onMessage(async (message) => {
             try {
-                // Ignorar mensajes del propio bot para evitar bucles infinitos
-                if (message.fromMe && state.lastBotMessageId === message.id.id) {
-                    return;
-                }
+                if (message.fromMe && state.lastBotMessageId === message.id.id) return;
 
-                // Si hay un grupo configurado, verificar que el mensaje sea para ese grupo
                 if (WPP_GROUP_ID) {
-                    // Verificar que el mensaje sea del usuario (fromMe: true) y sea para el grupo correcto
                     if (message.fromMe && message.to === WPP_GROUP_ID) {
                         await handleWPPCommand(client, message);
-                        return;
                     }
                     return;
                 }
 
-                // Si hay un número de usuario configurado, filtrar por ese número
                 if (WPP_USER_NUMBER) {
-                    // Extraer el número de diferentes formatos
-                    let userNumber = message.from;
-
-                    // Eliminar sufijos de dominio de WhatsApp
-                    userNumber = userNumber.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
-
-                    // Si es un mensaje de grupo, verificar si el remitente es el usuario autorizado
-                    if (message.isGroupMsg || message.from.includes('@g.us')) {
-                        // En grupos, verificar si el mensaje es del usuario autorizado
-                        if (userNumber !== WPP_USER_NUMBER) {
-                            return;
-                        }
-                    } else {
-                        // En chat individual, verificar si es el usuario autorizado
-                        if (userNumber !== WPP_USER_NUMBER) {
-                            return;
-                        }
-                    }
+                    let userNumber = message.from.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
+                    if (userNumber !== WPP_USER_NUMBER) return;
                 }
 
                 await handleWPPCommand(client, message);
@@ -756,24 +561,10 @@ async function initWPPConnect() {
             }
         });
 
-        // Escuchar también mensajes propios (para cuando te envías mensajes a ti mismo)
-        client.onAck(async (ack) => {
-            try {
-                // Silencioso - no necesitamos logs de ACK
-            } catch (error) {
-                console.error(`❌ [WPPConnect] Error en handler de ACK: ${error.message}`);
-            }
-        });
-
-        // Escuchar eventos de mensajes en general (incluyendo propios)
         client.onAnyMessage(async (message) => {
             try {
-                // Solo mostrar mensajes del grupo seleccionado
-                if (WPP_GROUP_ID && message.to !== WPP_GROUP_ID) {
-                    return;
-                }
+                if (WPP_GROUP_ID && message.to !== WPP_GROUP_ID) return;
 
-                // Si hay un grupo configurado, solo procesar mensajes del usuario en ese grupo
                 if (WPP_GROUP_ID) {
                     if (message.fromMe && message.to === WPP_GROUP_ID) {
                         await handleWPPCommand(client, message);
@@ -781,11 +572,8 @@ async function initWPPConnect() {
                     return;
                 }
 
-                // Solo procesar comandos si es del usuario autorizado
                 if (WPP_USER_NUMBER) {
-                    let userNumber = message.from;
-                    userNumber = userNumber.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
-
+                    let userNumber = message.from.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
                     if (userNumber === WPP_USER_NUMBER) {
                         await handleWPPCommand(client, message);
                     }
@@ -797,32 +585,22 @@ async function initWPPConnect() {
             }
         });
 
-        // Escuchar eventos de estado de la sesión
         client.onStateChange(async (status) => {
             console.log(`[WPPConnect] Cambio de estado: ${status}`);
-
-            if (status === 'CONNECTED' || status === 'isLogged') {
+            if (['CONNECTED', 'isLogged'].includes(status)) {
                 state.wppConnected = true;
                 state.wppQRCode = null;
-                console.log('✅ [WPPConnect] Sesión conectada (onStateChange), guardando token explícitamente en Supabase...');
-                
-                // Guardar explícitamente el token después de conectar exitosamente
+
                 try {
                     const tokenData = await client.getSessionTokenBrowser();
                     if (tokenData && isValidSessionToken(tokenData)) {
-                        console.log(`💾 [WPPConnect] Guardando token del navegador para sesión ${WPP_SESSION_NAME}`);
-                        const saved = await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
-                        if (saved) {
-                            console.log(`✅ [WPPConnect] Token guardado exitosamente en Supabase (onStateChange)`);
-                        } else {
-                            console.error(`❌ [WPPConnect] Error al guardar token en Supabase (onStateChange)`);
-                        }
-                    } else {
-                        console.warn(`⚠️ [WPPConnect] Token del navegador no válido o null (onStateChange)`);
+                        await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
                     }
-                } catch (error) {
-                    console.error(`❌ [WPPConnect] Error al obtener token del navegador (onStateChange): ${error.message}`);
+                } catch (e) {
+                    console.error(`❌ Error guardando token en cambio de estado: ${e.message}`);
                 }
+
+                await uploadWPPSessionFiles();
             }
         });
 
@@ -838,7 +616,6 @@ async function initWPPConnect() {
 app.listen(PORT, async () => {
     console.log(`🚀 Servidor Express iniciado en puerto ${PORT}`);
 
-    // --- Iniciar cliente de Telegram ---
     try {
         await client.start();
         console.log("✅ Telegram client started and authorized");
@@ -856,15 +633,7 @@ app.listen(PORT, async () => {
         console.error(`❌ Error al iniciar el cliente de Telegram: ${error.message}`);
     }
 
-    // --- Iniciar WPPConnect (con retardo para no saturar al arrancar) ---
-    try {
-        // Pequeño retardo para que Telegram se estabilice primero
-        setTimeout(async () => {
-            await initWPPConnect();
-        }, 5000);
-    } catch (error) {
-        console.error(`❌ Error al iniciar WPPConnect: ${error.message}`);
-    }
-
-    console.log("✅ Ambos servicios en proceso de inicio...");
+    setTimeout(async () => {
+        await initWPPConnect();
+    }, 5000);
 });
