@@ -5,6 +5,8 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const WebSocket = require('ws');
+const archiver = require('archiver');
+const AdmZip = require('adm-zip');
 const { createClient } = require('@supabase/supabase-js');
 const { TelegramClient } = require('teleproto');
 const { StringSession } = require('teleproto/sessions');
@@ -57,135 +59,188 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
 }
 
 // ============================================================
-// Función de validación de token (siguiendo el patrón de WPPConnect)
+// Funciones de gestión de userDataDir (Perfil de Chrome)
 // ============================================================
-function isValidSessionToken(token) {
-    const requiredAttributes = ['WABrowserId', 'WASecretBundle', 'WAToken1', 'WAToken2'];
-    
-    if (!token) {
-        console.warn('⚠️ [TokenStore] Token es null o undefined');
-        return false;
+
+// Eliminar archivos de bloqueo de Chrome para evitar errores de "browser already running"
+function cleanupLockFiles(userDataDirPath) {
+    try {
+        const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+        let cleanedCount = 0;
+
+        for (const lockFile of lockFiles) {
+            const lockFilePath = path.join(userDataDirPath, lockFile);
+            if (fs.existsSync(lockFilePath)) {
+                fs.unlinkSync(lockFilePath);
+                cleanedCount++;
+                console.log(`🧹 [Chrome] Eliminado archivo de bloqueo: ${lockFile}`);
+            }
+        }
+
+        if (cleanedCount > 0) {
+            console.log(`✅ [Chrome] ${cleanedCount} archivos de bloqueo eliminados`);
+        }
+    } catch (error) {
+        console.error(`❌ [Chrome] Error al limpiar archivos de bloqueo: ${error.message}`);
     }
-
-    const isValid = requiredAttributes.every(
-        attr => typeof token[attr] === 'string' && token[attr].length > 0
-    );
-
-    if (!isValid) {
-        console.warn('⚠️ [TokenStore] Token no tiene todos los campos requeridos o están vacíos');
-    }
-
-    return isValid;
 }
 
-// ============================================================
-// TokenStore personalizado para Supabase
-// ============================================================
-const supabaseTokenStore = {
-    getToken: async (sessionName) => {
-        try {
-            console.log(`🔍 [TokenStore] getToken llamado para: ${sessionName}`);
-            
-            if (!supabase) return undefined;
+// Limpiar directorios de caché de Chrome para reducir el tamaño del perfil
+function cleanupCacheDirectories(userDataDirPath) {
+    try {
+        const cacheDirs = [
+            'Default/Cache',
+            'Default/Code Cache',
+            'Default/GPUCache',
+            'Default/Service Worker',
+            'Default/IndexedDB'
+        ];
+        let cleanedSize = 0;
 
-            const fileName = `${sessionName}_token.json`;
-            const { data, error } = await supabase.storage
-                .from(SUPABASE_BUCKET)
-                .download(fileName);
+        for (const cacheDir of cacheDirs) {
+            const cachePath = path.join(userDataDirPath, cacheDir);
+            if (fs.existsSync(cachePath)) {
+                const getDirSize = (dirPath) => {
+                    let size = 0;
+                    const files = fs.readdirSync(dirPath);
+                    for (const file of files) {
+                        const filePath = path.join(dirPath, file);
+                        const stats = fs.statSync(filePath);
+                        if (stats.isDirectory()) {
+                            size += getDirSize(filePath);
+                        } else {
+                            size += stats.size;
+                        }
+                    }
+                    return size;
+                };
 
-            if (error) {
-                console.log(`ℹ️ [TokenStore] No hay sesión guardada para ${sessionName}: ${error.message}`);
-                return undefined;
+                const dirSize = getDirSize(cachePath);
+                fs.rmSync(cachePath, { recursive: true, force: true });
+                cleanedSize += dirSize;
+                console.log(`🧹 [Chrome] Eliminado caché: ${cacheDir} (${(dirSize / 1024 / 1024).toFixed(2)} MB)`);
             }
-
-            const content = await data.text();
-            const tokenData = JSON.parse(content);
-            
-            if (!isValidSessionToken(tokenData)) {
-                console.error(`❌ [TokenStore] Token recuperado no es válido para ${sessionName}`);
-                return undefined;
-            }
-
-            console.log(`✅ [TokenStore] Sesión restaurada desde Supabase para ${sessionName}`);
-            return tokenData;
-        } catch (error) {
-            console.error(`❌ [TokenStore] Error al obtener token de Supabase: ${error.message}`);
-            return undefined;
         }
-    },
 
-    setToken: async (sessionName, tokenData) => {
-        try {
-            console.log(`💾 [TokenStore] setToken llamado para: ${sessionName}`);
-            
-            if (!supabase) return false;
-
-            if (!isValidSessionToken(tokenData)) {
-                console.error(`❌ [TokenStore] Intentando guardar token inválido para ${sessionName}`);
-                return false;
-            }
-
-            const fileName = `${sessionName}_token.json`;
-            const content = JSON.stringify(tokenData);
-            const fileBuffer = Buffer.from(content);
-
-            const { error } = await supabase.storage
-                .from(SUPABASE_BUCKET)
-                .upload(fileName, fileBuffer, { upsert: true });
-
-            if (error) {
-                console.error(`❌ [TokenStore] Error al guardar token en Supabase: ${error.message}`);
-                return false;
-            }
-
-            console.log(`✅ [TokenStore] Sesión guardada en Supabase para ${sessionName}`);
-            return true;
-        } catch (error) {
-            console.error(`❌ [TokenStore] Error en setToken: ${error.message}`);
-            return false;
+        if (cleanedSize > 0) {
+            console.log(`✅ [Chrome] Total liberado: ${(cleanedSize / 1024 / 1024).toFixed(2)} MB`);
         }
-    },
-
-    removeToken: async (sessionName) => {
-        try {
-            if (!supabase) return false;
-
-            const fileName = `${sessionName}_token.json`;
-            const { error } = await supabase.storage
-                .from(SUPABASE_BUCKET)
-                .remove([fileName]);
-
-            if (error) {
-                console.error(`❌ [TokenStore] Error al eliminar token de Supabase: ${error.message}`);
-                return false;
-            }
-
-            console.log(`✅ [TokenStore] Sesión eliminada de Supabase para ${sessionName}`);
-            return true;
-        } catch (error) {
-            console.error(`❌ [TokenStore] Error en removeToken: ${error.message}`);
-            return false;
-        }
-    },
-
-    listTokens: async () => {
-        try {
-            if (!supabase) return [];
-
-            const { data: files, error } = await supabase.storage
-                .from(SUPABASE_BUCKET)
-                .list();
-
-            if (error) return [];
-
-            return files
-                .filter(file => file.name.endsWith('_token.json'))
-                .map(file => file.name.replace('_token.json', ''));
-        } catch (error) {
-            return [];
-        }
+    } catch (error) {
+        console.error(`❌ [Chrome] Error al limpiar caché: ${error.message}`);
     }
-};
+}
+
+// Descargar perfil de usuario comprimido desde Supabase Storage
+async function downloadUserProfile(sessionName) {
+    try {
+        if (!supabase) {
+            console.warn('⚠️ [Profile] Supabase no configurado, no se restaurará el perfil');
+            return false;
+        }
+
+        const fileName = `${sessionName}.zip`;
+        console.log(`🔍 [Profile] Buscando perfil: ${fileName}`);
+
+        const { data, error } = await supabase.storage
+            .from(SUPABASE_BUCKET)
+            .download(fileName);
+
+        if (error) {
+            console.log(`ℹ️ [Profile] No hay perfil guardado para ${sessionName}: ${error.message}`);
+            return false;
+        }
+
+        // Crear directorio userDataDir
+        const userDataDir = path.join(__dirname, 'tokens', `wpp-profile-${sessionName}`);
+        if (!fs.existsSync(userDataDir)) {
+            fs.mkdirSync(userDataDir, { recursive: true });
+        }
+
+        // Limpiar archivos de bloqueo antes de extraer
+        cleanupLockFiles(userDataDir);
+
+        // Extraer el zip
+        const arrayBuffer = await data.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const zip = new AdmZip(buffer);
+        zip.extractAllTo(userDataDir, true);
+
+        console.log(`✅ [Profile] Perfil restaurado desde Supabase para ${sessionName}`);
+        return true;
+    } catch (error) {
+        console.error(`❌ [Profile] Error al descargar perfil: ${error.message}`);
+        return false;
+    }
+}
+
+// Comprimir y subir perfil de usuario a Supabase Storage
+async function uploadUserProfile(sessionName, userDataDirPath) {
+    try {
+        if (!supabase) {
+            console.warn('⚠️ [Profile] Supabase no configurado, no se guardará el perfil');
+            return false;
+        }
+
+        if (!fs.existsSync(userDataDirPath)) {
+            console.warn(`⚠️ [Profile] userDataDir no existe: ${userDataDirPath}`);
+            return false;
+        }
+
+        console.log(`📦 [Profile] Comprimiendo perfil para ${sessionName}...`);
+
+        // Limpiar caché antes de comprimir
+        cleanupCacheDirectories(userDataDirPath);
+
+        // Crear archivo zip en memoria
+        const zipPath = path.join(__dirname, `${sessionName}-temp.zip`);
+        const output = fs.createWriteStream(zipPath);
+        const archive = archiver('zip', { zlib: { level: 9 } });
+
+        return new Promise((resolve, reject) => {
+            output.on('close', async () => {
+                try {
+                    const stats = fs.statSync(zipPath);
+                    console.log(`📦 [Profile] Tamaño del zip: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
+
+                    const fileBuffer = fs.readFileSync(zipPath);
+                    const fileName = `${sessionName}.zip`;
+
+                    const { error } = await supabase.storage
+                        .from(SUPABASE_BUCKET)
+                        .upload(fileName, fileBuffer, { upsert: true });
+
+                    // Eliminar archivo temporal
+                    fs.unlinkSync(zipPath);
+
+                    if (error) {
+                        console.error(`❌ [Profile] Error al subir perfil: ${error.message}`);
+                        resolve(false);
+                    } else {
+                        console.log(`✅ [Profile] Perfil guardado en Supabase para ${sessionName}`);
+                        resolve(true);
+                    }
+                } catch (err) {
+                    console.error(`❌ [Profile] Error en upload: ${err.message}`);
+                    if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+                    resolve(false);
+                }
+            });
+
+            archive.on('error', (err) => {
+                console.error(`❌ [Profile] Error en archiver: ${err.message}`);
+                if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+                reject(err);
+            });
+
+            archive.pipe(output);
+            archive.directory(userDataDirPath, false);
+            archive.finalize();
+        });
+    } catch (error) {
+        console.error(`❌ [Profile] Error general al subir perfil: ${error.message}`);
+        return false;
+    }
+}
 
 // Diccionario de comandos de WhatsApp
 const wppCommands = {
@@ -262,6 +317,8 @@ const state = {
     wppConnected: false,
     wppQRCode: null,
     lastBotMessageId: null,
+    wppClient: null,
+    wppUserDataDir: null,
 };
 
 // ============================================================
@@ -382,96 +439,6 @@ async function handleWPPCommand(wpp, message) {
 }
 
 // ============================================================
-// Función: Descargar archivos de sesión desde Supabase
-// ============================================================
-async function downloadWPPSessionFiles() {
-    try {
-        if (!supabase) {
-            console.warn('⚠️ Supabase no configurado, no se restaurará la sesión');
-            return false;
-        }
-
-        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
-        if (!fs.existsSync(tokenDir)) {
-            fs.mkdirSync(tokenDir, { recursive: true });
-        }
-
-        console.log('🔍 [WPPConnect] Descargando archivos de sesión desde Supabase...');
-
-        const { data: files, error } = await supabase.storage
-            .from(SUPABASE_BUCKET)
-            .list(WPP_SESSION_NAME);
-
-        if (error || !files || files.length === 0) {
-            console.log('ℹ️ [WPPConnect] No hay archivos de sesión guardados en Supabase');
-            return false;
-        }
-
-        let downloadedCount = 0;
-        for (const file of files) {
-            if (file.name === '') continue;
-
-            const fileName = `${WPP_SESSION_NAME}/${file.name}`;
-            const { data: fileData, error: downloadError } = await supabase.storage
-                .from(SUPABASE_BUCKET)
-                .download(fileName);
-
-            if (downloadError) continue;
-
-            const filePath = path.join(tokenDir, file.name);
-            const buffer = Buffer.from(await fileData.arrayBuffer());
-            fs.writeFileSync(filePath, buffer);
-            downloadedCount++;
-        }
-
-        console.log(`✅ [WPPConnect] Sesión restaurada desde Supabase (${downloadedCount} archivos)`);
-        return downloadedCount > 0;
-    } catch (error) {
-        console.error(`❌ [WPPConnect] Error al descargar sesión: ${error.message}`);
-        return false;
-    }
-}
-
-// ============================================================
-// Función: Subir archivos de sesión a Supabase
-// ============================================================
-async function uploadWPPSessionFiles() {
-    try {
-        if (!supabase) return;
-
-        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
-        if (!fs.existsSync(tokenDir)) return;
-
-        const files = fs.readdirSync(tokenDir);
-        if (files.length === 0) return;
-
-        let uploadedCount = 0;
-        for (const file of files) {
-            const filePath = path.join(tokenDir, file);
-
-            try {
-                if (!fs.statSync(filePath).isFile()) continue;
-
-                const fileBuffer = fs.readFileSync(filePath);
-                const fileName = `${WPP_SESSION_NAME}/${file}`;
-
-                const { error } = await supabase.storage
-                    .from(SUPABASE_BUCKET)
-                    .upload(fileName, fileBuffer, { upsert: true });
-
-                if (!error) uploadedCount++;
-            } catch {
-                continue;
-            }
-        }
-
-        console.log(`✅ [WPPConnect] Sesión guardada en Supabase (${uploadedCount} archivos)`);
-    } catch (error) {
-        console.error(`❌ [WPPConnect] Error al subir sesión: ${error.message}`);
-    }
-}
-
-// ============================================================
 // Función: Inicializar WPPConnect
 // ============================================================
 async function initWPPConnect() {
@@ -480,6 +447,17 @@ async function initWPPConnect() {
         console.log('🔍 [WPPConnect] Supabase cliente configurado:', !!supabase);
 
         const wpp = require('@wppconnect-team/wppconnect');
+
+        // Configurar userDataDir para persistencia de sesión Multi-Device
+        const userDataDir = path.join(__dirname, 'tokens', `wpp-profile-${WPP_SESSION_NAME}`);
+
+        // Descargar perfil desde Supabase si existe
+        const profileRestored = await downloadUserProfile(WPP_SESSION_NAME);
+        if (profileRestored) {
+            console.log('✅ [WPPConnect] Perfil de sesión restaurado');
+        } else {
+            console.log('ℹ️ [WPPConnect] Iniciando con perfil nuevo (se requerirá escanear QR)');
+        }
 
         const options = {
             session: WPP_SESSION_NAME,
@@ -490,6 +468,7 @@ async function initWPPConnect() {
             logV2: false,
             logV3: false,
             puppeteerOptions: {
+                userDataDir: userDataDir,
                 executablePath: '/usr/bin/chromium-browser',
                 args: [
                     '--no-sandbox',
@@ -511,8 +490,6 @@ async function initWPPConnect() {
                     '--disable-renderer-backgrounding',
                 ],
             },
-            // WPPConnect usará este tokenStore internamente para guardar/leer en Supabase
-            tokenStore: supabaseTokenStore,
             catchQR: (base64QR) => {
                 state.wppQRCode = base64QR;
             },
@@ -521,21 +498,16 @@ async function initWPPConnect() {
                 if (['isLogged', 'CONNECTED', 'qrReadSuccess'].includes(statusSession)) {
                     state.wppConnected = true;
                     state.wppQRCode = null;
+
+                    // Subir perfil a Supabase cuando la sesión se conecte exitosamente
+                    uploadUserProfile(WPP_SESSION_NAME, userDataDir).catch(err => {
+                        console.error(`❌ [WPPConnect] Error al subir perfil en statusFind: ${err.message}`);
+                    });
                 }
             },
         };
 
         const client = await wpp.create(options);
-
-        // Guardar explícitamente el token en Supabase cuando el cliente esté totalmente listo
-        try {
-            const tokenData = await client.getSessionTokenBrowser();
-            if (tokenData && isValidSessionToken(tokenData)) {
-                await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
-            }
-        } catch (e) {
-            console.error(`⚠️ No se pudo extraer el token inicial: ${e.message}`);
-        }
 
         // Escuchar mensajes entrantes
         client.onMessage(async (message) => {
@@ -584,23 +556,23 @@ async function initWPPConnect() {
             }
         });
 
-        // Actualizar estado y respaldar token si cambia de estado
+        // Actualizar estado y respaldar perfil si cambia de estado
         client.onStateChange(async (status) => {
             console.log(`[WPPConnect] Cambio de estado: ${status}`);
             if (['CONNECTED', 'isLogged'].includes(status)) {
                 state.wppConnected = true;
                 state.wppQRCode = null;
 
-                try {
-                    const tokenData = await client.getSessionTokenBrowser();
-                    if (tokenData && isValidSessionToken(tokenData)) {
-                        await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
-                    }
-                } catch (e) {
-                    console.error(`❌ Error guardando token: ${e.message}`);
-                }
+                // Subir perfil a Supabase cuando el estado cambie a conectado
+                uploadUserProfile(WPP_SESSION_NAME, userDataDir).catch(err => {
+                    console.error(`❌ [WPPConnect] Error al subir perfil en onStateChange: ${err.message}`);
+                });
             }
         });
+
+        // Guardar referencia al cliente y userDataDir para shutdown
+        state.wppClient = client;
+        state.wppUserDataDir = userDataDir;
 
     } catch (error) {
         console.error(`❌ Error al iniciar WPPConnect: ${error.message}`);
@@ -608,6 +580,37 @@ async function initWPPConnect() {
     }
 }
 
+
+// ============================================================
+// Handler para cierre graceful (SIGTERM)
+// ============================================================
+async function handleShutdown() {
+    console.log('🛑 [Shutdown] Recibida señal de terminación, iniciando cierre graceful...');
+
+    try {
+        // Subir perfil de WhatsApp a Supabase antes de cerrar
+        if (state.wppUserDataDir && state.wppConnected) {
+            console.log('💾 [Shutdown] Guardando perfil de WhatsApp...');
+            await uploadUserProfile(WPP_SESSION_NAME, state.wppUserDataDir);
+        }
+
+        // Cerrar cliente de WPPConnect si existe
+        if (state.wppClient) {
+            console.log('📱 [Shutdown] Cerrando cliente de WhatsApp...');
+            await state.wppClient.close();
+        }
+
+        console.log('✅ [Shutdown] Cierre graceful completado');
+    } catch (error) {
+        console.error(`❌ [Shutdown] Error durante cierre: ${error.message}`);
+    } finally {
+        process.exit(0);
+    }
+}
+
+// Escuchar señales de terminación
+process.on('SIGTERM', handleShutdown);
+process.on('SIGINT', handleShutdown);
 
 // ============================================================
 // Inicio del servidor y clientes

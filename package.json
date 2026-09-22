@@ -14,7 +14,9 @@
     "teleproto": "^1.229.0",
     "@wppconnect-team/wppconnect": "^2.3.1",
     "@supabase/supabase-js": "^2.39.0",
-    "ws": "^8.16.0"
+    "ws": "^8.16.0",
+    "archiver": "^6.0.1",
+    "adm-zip": "^0.5.10"
   },
   "devDependencies": {
     "nodemon": "^3.0.0"

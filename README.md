@@ -28,6 +28,11 @@ Configurar como secretos en Hugging Face Spaces:
 ### WhatsApp (WPPConnect)
 - `WPP_SESSION_NAME`: Nombre de la sesión de WPPConnect (por defecto: `default`)
 
+### Supabase Storage (Requerido para persistencia de WhatsApp)
+- `SUPABASE_URL`: URL de tu proyecto Supabase
+- `SUPABASE_SERVICE_ROLE_KEY`: Service Role Key de Supabase (permisos de escritura en Storage)
+- `SUPABASE_BUCKET`: Nombre del bucket de Supabase Storage (por defecto: `wpp-sessions`)
+
 ### Compartido
 - `N8N_WEBHOOK_URL`: URL del webhook de n8n (solo usado por Telegram)
 
@@ -41,10 +46,14 @@ Configurar como secretos en Hugging Face Spaces:
 
 ### WhatsApp — Bot de comandos
 1. La app conecta a **WhatsApp Web** usando WPPConnect (Puppeteer)
-2. Escucha mensajes en todos los chats
-3. Cuando recibe un mensaje que empieza con `/`, busca el comando en el diccionario (`wppCommands` en `index.js`)
-4. Si el comando existe, envía la respuesta correspondiente al mismo chat
-5. Si el comando no existe, no hace nada
+2. Al iniciar, descarga el perfil de Chrome (userDataDir) desde Supabase Storage si existe
+3. Si no hay perfil guardado, genera un QR que debes escanear con tu teléfono
+4. Escucha mensajes en todos los chats
+5. Cuando recibe un mensaje que empieza con `/`, busca el comando en el diccionario (`wppCommands` en `index.js`)
+6. Si el comando existe, envía la respuesta correspondiente al mismo chat
+7. Si el comando no existe, no hace nada
+8. Cuando la sesión se conecta exitosamente o al recibir señal de shutdown, el perfil se comprime y sube a Supabase Storage
+9. Esta persistencia permite que la sesión sobreviva reinicios del Space (modo Multi-Device de WhatsApp)
 
 ## Comandos de WhatsApp
 
@@ -52,6 +61,23 @@ Configurar como secretos en Hugging Face Spaces:
 |---|---|
 | `/hola` | 🤖 Hola! |
 | `/comandos` | Lista de comandos disponibles |
+
+## Configuración de Supabase Storage
+
+Para que la persistencia de WhatsApp funcione, necesitas configurar un bucket en Supabase Storage:
+
+1. Crea un proyecto en Supabase (o usa uno existente)
+2. Ve a Storage → Crear un nuevo bucket llamado `wpp-sessions` (o el nombre que prefieras)
+3. Configura las políticas del bucket para permitir lectura/escritura (usa Service Role Key para bypass)
+4. Copia la URL del proyecto y la Service Role Key desde Settings → API
+5. Configura las variables de entorno:
+   - `SUPABASE_URL`: https://xxx.supabase.co
+   - `SUPABASE_SERVICE_ROLE_KEY`: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+   - `SUPABASE_BUCKET`: wpp-sessions (o el nombre que usaste)
+
+El perfil de Chrome se guardará como `sessionName.zip` en el bucket de Supabase.
+
+## Comandos de WhatsApp
 
 Para agregar nuevos comandos, edita el objeto `wppCommands` en `index.js`:
 
@@ -118,5 +144,6 @@ Mensajes que contienen cualquiera de estas palabras son reenviadas a n8n:
 ## Limitaciones
 
 - **Puppeteer/Chromium**: WPPConnect usa un navegador headless, lo que requiere más RAM que Telegram solo. Asegúrate de que tu HF Space tenga suficiente memoria.
-- **Sesión WhatsApp**: La sesión de WhatsApp puede requerir re-escanear el QR periódicamente.
+- **Persistencia de sesión**: La sesión de WhatsApp se persiste usando el perfil completo de Chrome (userDataDir). El perfil se comprime y sube a Supabase Storage al conectarse y al cerrar. Si el container se reinicia sin recibir SIGTERM (ej: crash forzado), los cambios desde la última subida pueden perderse.
+- **Tamaño del perfil**: El perfil de Chrome puede crecer con el tiempo. Se limpian las cachés antes de subir para reducir el tamaño, pero monitorea el uso de almacenamiento en Supabase.
 - **Un solo puerto**: Ambos servicios comparten el puerto 7860 con rutas diferenciadas.
