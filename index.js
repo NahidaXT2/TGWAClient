@@ -261,26 +261,49 @@ app.get('/wpp/qr-page', (req, res) => {
 // ============================================================
 async function handleWPPCommand(wpp, message) {
     try {
-        if (!message.body || message.type !== 'chat') return;
+        console.log('🔧 Procesando comando:', message.body);
+
+        if (!message.body || message.type !== 'chat') {
+            console.log('⏭️ Mensaje no es chat o no tiene body');
+            return;
+        }
 
         // Solo procesar mensajes que empiecen con "/"
-        if (!message.body.startsWith('/')) return;
+        if (!message.body.startsWith('/')) {
+            console.log('⏭️ Mensaje no empieza con /');
+            return;
+        }
 
         // Extraer el nombre del comando (sin la barra inicial)
         const command = message.body.substring(1).split(' ')[0].toLowerCase();
+        console.log('🔍 Comando extraído:', command);
 
         // Buscar el comando en el diccionario
         const response = wppCommands[command];
 
         if (response) {
-            const sentMessage = await wpp.sendText(message.id.remote, response);
-            // Guardar el ID del mensaje enviado para evitar responder a nosotros mismos
-            if (sentMessage && sentMessage.id) {
-                state.lastBotMessageId = sentMessage.id;
+            console.log('📤 Enviando respuesta:', response);
+            console.log('📤 Destino:', message.to || message.id.remote);
+
+            try {
+                const sentMessage = await wpp.sendText(message.to || message.id.remote, response);
+                console.log('✅ Mensaje enviado:', sentMessage);
+
+                // Guardar el ID del mensaje enviado para evitar responder a nosotros mismos
+                if (sentMessage && sentMessage.id) {
+                    state.lastBotMessageId = sentMessage.id;
+                    console.log('💾 ID del mensaje guardado:', sentMessage.id);
+                }
+            } catch (sendError) {
+                console.error('❌ Error al enviar mensaje:', sendError.message);
+                console.error('❌ Stack:', sendError.stack);
             }
+        } else {
+            console.log('⏭️ Comando no encontrado:', command);
         }
     } catch (error) {
         console.error(`❌ [WPPConnect] Error al procesar comando: ${error.message}`);
+        console.error(`❌ Stack: ${error.stack}`);
     }
 }
 
@@ -467,6 +490,11 @@ async function initWPPConnect() {
         // Escuchar eventos de mensajes en general (incluyendo propios)
         client.onAnyMessage(async (message) => {
             try {
+                // Solo mostrar mensajes del grupo seleccionado
+                if (WPP_GROUP_ID && message.to !== WPP_GROUP_ID) {
+                    return;
+                }
+
                 console.log('📩 Mensaje ANY recibido:', {
                     from: message.from,
                     fromMe: message.fromMe,
@@ -476,6 +504,15 @@ async function initWPPConnect() {
                     isGroupMsg: message.isGroupMsg,
                     to: message.to
                 });
+
+                // Si hay un grupo configurado, solo procesar mensajes del usuario en ese grupo
+                if (WPP_GROUP_ID) {
+                    if (message.fromMe && message.to === WPP_GROUP_ID) {
+                        console.log('✅ Procesando comando del usuario en el grupo');
+                        await handleWPPCommand(client, message);
+                    }
+                    return;
+                }
 
                 // Solo procesar comandos si es del usuario autorizado
                 if (WPP_USER_NUMBER) {
