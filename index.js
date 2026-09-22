@@ -333,10 +333,21 @@ async function uploadSessionToSupabase() {
         }
 
         const files = fs.readdirSync(tokenDir);
-        console.log(`📤 Subiendo ${files.length} archivos a Supabase...`);
+        const fileCount = files.filter(file => {
+            const filePath = path.join(tokenDir, file);
+            return fs.statSync(filePath).isFile();
+        }).length;
+
+        console.log(`📤 Subiendo ${fileCount} archivos a Supabase...`);
 
         for (const file of files) {
             const filePath = path.join(tokenDir, file);
+
+            // Omitir directorios, solo procesar archivos
+            if (!fs.statSync(filePath).isFile()) {
+                continue;
+            }
+
             const fileBuffer = fs.readFileSync(filePath);
             const fileName = `${WPP_SESSION_NAME}/${file}`;
 
