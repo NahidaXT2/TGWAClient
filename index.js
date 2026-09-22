@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const WebSocket = require('ws');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const { createClient } = require('@supabase/supabase-js');
 const { TelegramClient } = require('teleproto');
@@ -113,6 +113,7 @@ const state = {
     telegramConnected: false,
     wppConnected: false,
     wppClient: null,
+    wppQRCode: null,
     lastBotMessageId: null,
 };
 
@@ -133,13 +134,14 @@ async function initWhatsApp() {
         wpp.ev.on('creds.update', saveCreds);
 
         // Conexión exitosa
-        wpp.ev.on('connection.update', (update) => {
+        wpp.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
             if (connection === 'connecting') {
                 console.log('📱 [WhatsApp] Conectando...');
             } else if (connection === 'open') {
                 state.wppConnected = true;
+                state.wppQRCode = null;
                 console.log('✅ [WhatsApp] Conectado exitosamente');
                 console.log(`📋 Mi ID: ${wpp.user?.id || 'desconocido'}`);
             } else if (connection === 'close') {
@@ -152,14 +154,19 @@ async function initWhatsApp() {
                     console.log('🔄 [WhatsApp] Reconectando en 5 segundos...');
                     setTimeout(initWhatsApp, 5000);
                 } else {
-                    console.log('⚠️ [WhatsApp] Sesión cerrada (401). Escanea QR manualmente.');
+                    console.log('⚠️ [WhatsApp] Sesión cerrada (401). Visita /wpp para escanear QR.');
                 }
             }
 
-            // Manejar QR cuando está disponible
+            // Manejar QR cuando está disponible — guardarlo en estado para la ruta web
             if (qr) {
-                console.log('📷 [WhatsApp] QR disponible - escanéalo con tu teléfono:');
-                qrcode.generate(qr, { small: true });
+                try {
+                    const qrImage = await QRCode.toDataURL(qr);
+                    state.wppQRCode = qrImage;
+                    console.log('📷 [WhatsApp] QR generado (visible en http://localhost:' + PORT + '/wpp)');
+                } catch (e) {
+                    console.log('📷 [WhatsApp] QR generado');
+                }
             }
         });
 
@@ -224,8 +231,6 @@ async function initWhatsApp() {
         // Guardar referencia al cliente
         state.wppClient = wpp;
 
-        console.log('📱 [WhatsApp] Cliente Baileys inicializado. Escaneando QR...');
-
     } catch (error) {
         console.error(`❌ [WhatsApp] Error al iniciar Baileys: ${error.message}`);
         state.wppConnected = false;
@@ -287,6 +292,92 @@ app.get('/wpp', (req, res) => {
         connected: state.wppConnected,
         myId: state.wppClient?.user?.id || null,
         sessionPath: WPP_SESSION_PATH,
+    });
+});
+
+// ============================================================
+// Página web con QR de WhatsApp para escanear
+// ============================================================
+app.get('/wpp/qr', (req, res) => {
+    const qr = state.wppQRCode;
+    if (!qr) {
+        return res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WhatsApp - QR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+        .container { text-align: center; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        #qr-image { max-width: 300px; margin: 20px 0; }
+        .status { margin-top: 20px; padding: 10px; border-radius: 5px; background: #e7f3ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Vincular WhatsApp</h1>
+        <div id="qr-container"><p>Cargando código QR...</p></div>
+        <div class="status" id="status">Estado: ${state.wppConnected ? 'Conectado ✅' : 'Esperando QR...'}</div>
+    </div>
+    <script>
+        function checkQR() {
+            fetch('/wpp/qr-data')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.qrCode) {
+                        document.getElementById('qr-container').innerHTML = '<img id="qr-image" src="' + data.qrCode + '" alt="QR Code">';
+                        document.getElementById('status').textContent = 'Estado: QR listo para escanear';
+                    } else if (data.connected) {
+                        document.getElementById('qr-container').innerHTML = '<p>✅ Conectado</p>';
+                        document.getElementById('status').textContent = 'Estado: Conectado';
+                    } else {
+                        document.getElementById('status').textContent = 'Estado: Esperando QR...';
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('status').textContent = 'Estado: Error al cargar QR';
+                });
+        }
+        setInterval(checkQR, 2000);
+        checkQR();
+    </script>
+</body>
+</html>
+        `);
+    }
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WhatsApp - QR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
+        .container { text-align: center; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        #qr-image { max-width: 300px; margin: 20px 0; }
+        .status { margin-top: 20px; padding: 10px; border-radius: 5px; background: #e7f3ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 Vincular WhatsApp</h1>
+        <div id="qr-container"><img id="qr-image" src="${qr}" alt="QR Code"></div>
+        <div class="status" id="status">Estado: QR listo para escanear</div>
+    </div>
+</body>
+</html>
+    `);
+});
+
+// API endpoint para obtener el QR como JSON
+app.get('/wpp/qr-data', (req, res) => {
+    res.json({
+        qrCode: state.wppQRCode || null,
+        connected: state.wppConnected,
+        myId: state.wppClient?.user?.id || null,
     });
 });
 

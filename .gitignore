@@ -4,4 +4,6 @@ npm-debug.log*
 .DS_Store
 *.log
 plans/*
+.rooignore
+.codeiumignore
 wpp-session/
