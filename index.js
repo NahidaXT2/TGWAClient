@@ -125,8 +125,7 @@ async function initWhatsApp() {
         const { state: authState, saveCreds } = await useMultiFileAuthState(WPP_SESSION_PATH);
 
         const wpp = makeWASocket({
-            authState,
-            printQRInTerminal: true,
+            auth: authState,
         });
 
         // Guardar credenciales automáticamente
@@ -154,6 +153,12 @@ async function initWhatsApp() {
                 } else {
                     console.log('⚠️ [WhatsApp] Sesión cerrada (401). Escanea QR manualmente.');
                 }
+            }
+
+            // Manejar QR cuando está disponible
+            if (qr) {
+                console.log('📷 [WhatsApp] QR disponible - escanéalo con tu teléfono:');
+                console.log(qr);
             }
         });
 
