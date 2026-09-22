@@ -56,6 +56,108 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
     });
 }
 
+// ============================================================
+// TokenStore personalizado para Supabase
+// ============================================================
+const supabaseTokenStore = {
+    getToken: async (sessionName) => {
+        try {
+            if (!supabase) return null;
+
+            const fileName = `${sessionName}_token.json`;
+            const { data, error } = await supabase.storage
+                .from(SUPABASE_BUCKET)
+                .download(fileName);
+
+            if (error) {
+                console.log(`ℹ️ No hay sesión guardada para ${sessionName}`);
+                return null;
+            }
+
+            const content = await data.text();
+            const tokenData = JSON.parse(content);
+            console.log(`✅ Sesión restaurada desde Supabase para ${sessionName}`);
+            return tokenData;
+        } catch (error) {
+            console.error(`❌ Error al obtener token de Supabase: ${error.message}`);
+            return null;
+        }
+    },
+
+    setToken: async (sessionName, tokenData) => {
+        try {
+            if (!supabase) return false;
+
+            const fileName = `${sessionName}_token.json`;
+            const content = JSON.stringify(tokenData);
+            const fileBuffer = Buffer.from(content);
+
+            const { data, error } = await supabase.storage
+                .from(SUPABASE_BUCKET)
+                .upload(fileName, fileBuffer, {
+                    upsert: true
+                });
+
+            if (error) {
+                console.error(`❌ Error al guardar token en Supabase: ${error.message}`);
+                return false;
+            }
+
+            console.log(`✅ Sesión guardada en Supabase para ${sessionName}`);
+            return true;
+        } catch (error) {
+            console.error(`❌ Error en setToken: ${error.message}`);
+            return false;
+        }
+    },
+
+    removeToken: async (sessionName) => {
+        try {
+            if (!supabase) return false;
+
+            const fileName = `${sessionName}_token.json`;
+            const { error } = await supabase.storage
+                .from(SUPABASE_BUCKET)
+                .remove([fileName]);
+
+            if (error) {
+                console.error(`❌ Error al eliminar token de Supabase: ${error.message}`);
+                return false;
+            }
+
+            console.log(`✅ Sesión eliminada de Supabase para ${sessionName}`);
+            return true;
+        } catch (error) {
+            console.error(`❌ Error en removeToken: ${error.message}`);
+            return false;
+        }
+    },
+
+    listTokens: async () => {
+        try {
+            if (!supabase) return [];
+
+            const { data: files, error } = await supabase.storage
+                .from(SUPABASE_BUCKET)
+                .list();
+
+            if (error) {
+                console.error(`❌ Error al listar tokens: ${error.message}`);
+                return [];
+            }
+
+            const tokenFiles = files
+                .filter(file => file.name.endsWith('_token.json'))
+                .map(file => file.name.replace('_token.json', ''));
+
+            return tokenFiles;
+        } catch (error) {
+            console.error(`❌ Error en listTokens: ${error.message}`);
+            return [];
+        }
+    }
+};
+
 // Diccionario de comandos de WhatsApp
 // Escribe el comando después de "/" y la respuesta que deseas enviar
 const wppCommands = {
@@ -315,213 +417,14 @@ async function handleWPPCommand(wpp, message) {
     }
 }
 
-// ============================================================
-// Función: Subir archivos de sesión a Supabase
-// ============================================================
-async function uploadSessionToSupabase() {
-    try {
-        if (!supabase) {
-            console.warn('⚠️ Supabase no configurado, no se guardará la sesión');
-            return;
-        }
 
-        const tokenDir = path.join(__dirname, WPP_SESSION_NAME);
-
-        console.log(`🔍 Buscando archivos de sesión en: ${tokenDir}`);
-
-        if (!fs.existsSync(tokenDir)) {
-            console.warn('⚠️ Carpeta de tokens no existe');
-            return;
-        }
-
-        const files = fs.readdirSync(tokenDir);
-        console.log(`📂 Archivos encontrados en el directorio: ${files.join(', ')}`);
-
-        const fileCount = files.filter(file => {
-            const filePath = path.join(tokenDir, file);
-            return fs.statSync(filePath).isFile();
-        }).length;
-
-        console.log(`📤 Subiendo ${fileCount} archivos a Supabase...`);
-
-        for (const file of files) {
-            const filePath = path.join(tokenDir, file);
-
-            try {
-                // Omitir directorios, solo procesar archivos
-                if (!fs.statSync(filePath).isFile()) {
-                    continue;
-                }
-
-                const fileBuffer = fs.readFileSync(filePath);
-                const fileName = `${WPP_SESSION_NAME}/${file}`;
-
-                const { data, error } = await supabase.storage
-                    .from(SUPABASE_BUCKET)
-                    .upload(fileName, fileBuffer, {
-                        upsert: true
-                    });
-
-                if (error) {
-                    console.error(`❌ Error al subir ${file}:`, error.message);
-                } else {
-                    console.log(`✅ ${file} subido correctamente`);
-                }
-            } catch (fileError) {
-                console.warn(`⚠️ Omitiendo ${file}: ${fileError.message}`);
-                continue;
-            }
-        }
-
-        console.log('✅ Sesión guardada en Supabase');
-    } catch (error) {
-        console.error(`❌ Error al subir sesión a Supabase: ${error.message}`);
-    }
-}
-
-// ============================================================
-// Función: Guardar sesión como StringSession en Supabase
-// ============================================================
-async function saveStringSessionToSupabase(wppClient) {
-    try {
-        if (!supabase) {
-            console.warn('⚠️ Supabase no configurado, no se guardará la sesión');
-            return;
-        }
-
-        console.log('📤 Guardando sesión como StringSession...');
-
-        // Intentar obtener la sesión del cliente
-        try {
-            const sessionToken = await wppClient.getSession();
-            
-            if (sessionToken) {
-                const fileName = `${WPP_SESSION_NAME}_session.json`;
-                const sessionData = JSON.stringify({ session: sessionToken, timestamp: new Date().toISOString() });
-                const fileBuffer = Buffer.from(sessionData);
-
-                const { data, error } = await supabase.storage
-                    .from(SUPABASE_BUCKET)
-                    .upload(fileName, fileBuffer, {
-                        upsert: true
-                    });
-
-                if (error) {
-                    console.error(`❌ Error al guardar StringSession:`, error.message);
-                } else {
-                    console.log('✅ StringSession guardada en Supabase');
-                }
-            } else {
-                console.warn('⚠️ No se pudo obtener el token de sesión');
-            }
-        } catch (sessionError) {
-            console.warn('⚠️ Método getSession no disponible, intentando alternativa...');
-            
-            // Alternativa: buscar archivos de sesión manualmente
-            await uploadSessionToSupabase();
-        }
-    } catch (error) {
-        console.error(`❌ Error al guardar StringSession: ${error.message}`);
-    }
-}
-
-// ============================================================
-// Función: Descargar archivos de sesión desde Supabase
-// ============================================================
-async function downloadSessionFromSupabase() {
-    try {
-        if (!supabase) {
-            console.warn('⚠️ Supabase no configurado, no se restaurará la sesión');
-            return false;
-        }
-
-        const tokenDir = path.join(__dirname, WPP_SESSION_NAME);
-
-        // Crear carpeta si no existe
-        if (!fs.existsSync(tokenDir)) {
-            fs.mkdirSync(tokenDir, { recursive: true });
-        }
-
-        console.log('📥 Descargando sesión desde Supabase...');
-
-        // Primero intentar descargar StringSession
-        const sessionFileName = `${WPP_SESSION_NAME}_session.json`;
-        const { data: sessionData, error: sessionError } = await supabase.storage
-            .from(SUPABASE_BUCKET)
-            .download(sessionFileName);
-
-        if (!sessionError && sessionData) {
-            const sessionContent = await sessionData.text();
-            const sessionObj = JSON.parse(sessionContent);
-            
-            console.log('✅ StringSession encontrada y guardada');
-            
-            // Guardar el archivo de sesión
-            const sessionFilePath = path.join(tokenDir, 'session.json');
-            fs.writeFileSync(sessionFilePath, sessionContent);
-            
-            return true;
-        }
-
-        // Si no hay StringSession, intentar descargar archivos tradicionales
-        const { data: files, error } = await supabase.storage
-            .from(SUPABASE_BUCKET)
-            .list(WPP_SESSION_NAME);
-
-        if (error) {
-            console.error('❌ Error al listar archivos:', error.message);
-            return false;
-        }
-
-        if (!files || files.length === 0) {
-            console.log('ℹ️ No hay archivos de sesión en Supabase');
-            return false;
-        }
-
-        // Descargar cada archivo
-        for (const file of files) {
-            if (file.name === '') continue; // Ignorar carpetas
-
-            const fileName = `${WPP_SESSION_NAME}/${file.name}`;
-            const { data: fileData, error: downloadError } = await supabase.storage
-                .from(SUPABASE_BUCKET)
-                .download(fileName);
-
-            if (downloadError) {
-                console.error(`❌ Error al descargar ${file.name}:`, downloadError.message);
-                continue;
-            }
-
-            const filePath = path.join(tokenDir, file.name);
-            const buffer = Buffer.from(await fileData.arrayBuffer());
-            fs.writeFileSync(filePath, buffer);
-            console.log(`✅ ${file.name} descargado`);
-        }
-
-        console.log('✅ Sesión restaurada desde Supabase');
-        return true;
-    } catch (error) {
-        console.error(`❌ Error al descargar sesión de Supabase: ${error.message}`);
-        return false;
-    }
-}
 
 // ============================================================
 // Función: Inicializar WPPConnect
 // ============================================================
 async function initWPPConnect() {
     try {
-        // Intentar restaurar sesión desde Supabase antes de iniciar
-        const sessionRestored = await downloadSessionFromSupabase();
-
         const wpp = require('@wppconnect-team/wppconnect');
-
-        const tokenDir = path.join(__dirname, WPP_SESSION_NAME);
-        
-        // Crear directorio de tokens si no existe
-        if (!fs.existsSync(tokenDir)) {
-            fs.mkdirSync(tokenDir, { recursive: true });
-        }
 
         const options = {
             session: WPP_SESSION_NAME,
@@ -529,7 +432,7 @@ async function initWPPConnect() {
             logV1: false,
             logV2: false,
             logV3: false,
-            folderName: tokenDir,
+            tokenStore: supabaseTokenStore,
             puppeteerOptions: {
                 executablePath: '/usr/bin/chromium-browser',
                 args: [
@@ -559,11 +462,7 @@ async function initWPPConnect() {
                 if (statusSession === 'isLogged' || statusSession === 'CONNECTED') {
                     state.wppConnected = true;
                     state.wppQRCode = null;
-
-                    // Esperar 5 segundos para que los archivos de sesión se escriban completamente
-                    setTimeout(() => {
-                        saveStringSessionToSupabase(client);
-                    }, 5000);
+                    console.log('✅ [WPPConnect] Sesión conectada y guardada automáticamente en Supabase');
                 }
             },
         };
@@ -665,11 +564,7 @@ async function initWPPConnect() {
             if (status === 'CONNECTED' || status === 'isLogged') {
                 state.wppConnected = true;
                 state.wppQRCode = null;
-
-                // Esperar 5 segundos para que los archivos de sesión se escriban completamente
-                setTimeout(() => {
-                    saveStringSessionToSupabase(client);
-                }, 5000);
+                console.log('✅ [WPPConnect] Sesión conectada y guardada automáticamente en Supabase');
             }
         });
 
