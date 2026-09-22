@@ -327,12 +327,16 @@ async function uploadSessionToSupabase() {
 
         const tokenDir = path.join(__dirname, WPP_SESSION_NAME);
 
+        console.log(`🔍 Buscando archivos de sesión en: ${tokenDir}`);
+
         if (!fs.existsSync(tokenDir)) {
             console.warn('⚠️ Carpeta de tokens no existe');
             return;
         }
 
         const files = fs.readdirSync(tokenDir);
+        console.log(`📂 Archivos encontrados en el directorio: ${files.join(', ')}`);
+
         const fileCount = files.filter(file => {
             const filePath = path.join(tokenDir, file);
             return fs.statSync(filePath).isFile();
@@ -447,14 +451,21 @@ async function initWPPConnect() {
 
         const wpp = require('@wppconnect-team/wppconnect');
 
+        const tokenDir = path.join(__dirname, WPP_SESSION_NAME);
+        
+        // Crear directorio de tokens si no existe
+        if (!fs.existsSync(tokenDir)) {
+            fs.mkdirSync(tokenDir, { recursive: true });
+        }
+
         const options = {
             session: WPP_SESSION_NAME,
             headless: true,
             logV1: false,
             logV2: false,
             logV3: false,
-            puppeteerOptions: {
-                args: [
+            createOptions: {
+                browserArgs: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
@@ -482,8 +493,10 @@ async function initWPPConnect() {
                     state.wppConnected = true;
                     state.wppQRCode = null;
 
-                    // Subir sesión a Supabase cuando se conecte
-                    uploadSessionToSupabase();
+                    // Esperar 5 segundos para que los archivos de sesión se escriban completamente
+                    setTimeout(() => {
+                        uploadSessionToSupabase();
+                    }, 5000);
                 }
             },
         };
@@ -586,8 +599,10 @@ async function initWPPConnect() {
                 state.wppConnected = true;
                 state.wppQRCode = null;
 
-                // Subir sesión a Supabase cuando se conecte
-                uploadSessionToSupabase();
+                // Esperar 5 segundos para que los archivos de sesión se escriban completamente
+                setTimeout(() => {
+                    uploadSessionToSupabase();
+                }, 5000);
             }
         });
 
