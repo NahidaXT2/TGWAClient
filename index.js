@@ -392,15 +392,26 @@ async function initWPPConnect() {
         // Escuchar eventos de mensajes entrantes
         client.onMessage(async (message) => {
             try {
+                console.log('📩 Mensaje recibido:', {
+                    from: message.from,
+                    fromMe: message.fromMe,
+                    body: message.body,
+                    type: message.type,
+                    id: message.id
+                });
+
                 // Ignorar mensajes del propio bot para evitar bucles infinitos
                 if (message.fromMe && state.lastBotMessageId === message.id.id) {
+                    console.log('⏭️ Ignorando mensaje propio del bot');
                     return;
                 }
 
                 // Si hay un número de usuario configurado, solo responder a ese número
                 if (WPP_USER_NUMBER) {
                     const userNumber = message.from.replace('@c.us', '').replace('@s.whatsapp.net', '');
+                    console.log('🔍 Verificando número:', userNumber, 'vs', WPP_USER_NUMBER);
                     if (userNumber !== WPP_USER_NUMBER) {
+                        console.log('⏭️ Mensaje de número no autorizado');
                         return;
                     }
                 }
