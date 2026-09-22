@@ -509,6 +509,7 @@ async function initWPPConnect() {
         const options = {
             session: WPP_SESSION_NAME,
             headless: true,
+            logQR: false, // Deshabilitar QR ASCII en consola
             logV1: false,
             logV2: false,
             logV3: false,
@@ -541,7 +542,7 @@ async function initWPPConnect() {
             },
             statusFind: async (statusSession, session) => {
                 console.log(`📊 [WPPConnect] statusFind: ${statusSession}`);
-                if (statusSession === 'isLogged' || statusSession === 'CONNECTED') {
+                if (statusSession === 'isLogged' || statusSession === 'CONNECTED' || statusSession === 'qrReadSuccess') {
                     state.wppConnected = true;
                     state.wppQRCode = null;
                     console.log('✅ [WPPConnect] Sesión conectada, guardando token explícitamente en Supabase...');
@@ -658,13 +659,31 @@ async function initWPPConnect() {
         });
 
         // Escuchar eventos de estado de la sesión
-        client.onStateChange((status) => {
+        client.onStateChange(async (status) => {
             console.log(`[WPPConnect] Cambio de estado: ${status}`);
 
             if (status === 'CONNECTED' || status === 'isLogged') {
                 state.wppConnected = true;
                 state.wppQRCode = null;
-                console.log('✅ [WPPConnect] Sesión conectada (onStateChange)');
+                console.log('✅ [WPPConnect] Sesión conectada (onStateChange), guardando token explícitamente en Supabase...');
+                
+                // Guardar explícitamente el token después de conectar exitosamente
+                try {
+                    const tokenData = await client.getSessionTokenBrowser();
+                    if (tokenData && isValidSessionToken(tokenData)) {
+                        console.log(`💾 [WPPConnect] Guardando token del navegador para sesión ${WPP_SESSION_NAME}`);
+                        const saved = await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
+                        if (saved) {
+                            console.log(`✅ [WPPConnect] Token guardado exitosamente en Supabase (onStateChange)`);
+                        } else {
+                            console.error(`❌ [WPPConnect] Error al guardar token en Supabase (onStateChange)`);
+                        }
+                    } else {
+                        console.warn(`⚠️ [WPPConnect] Token del navegador no válido o null (onStateChange)`);
+                    }
+                } catch (error) {
+                    console.error(`❌ [WPPConnect] Error al obtener token del navegador (onStateChange): ${error.message}`);
+                }
             }
         });
 
