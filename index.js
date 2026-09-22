@@ -89,38 +89,30 @@ function cleanupLockFiles(userDataDirPath) {
         const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
         let cleanedCount = 0;
 
-        for (const lockFile of lockFiles) {
-            const lockFilePath = path.join(userDataDirPath, lockFile);
-            if (fs.existsSync(lockFilePath)) {
-                try {
-                    fs.unlinkSync(lockFilePath);
-                    cleanedCount++;
-                    console.log(`🧹 [Chrome] Eliminado archivo de bloqueo: ${lockFile}`);
-                } catch (err) {
-                    console.warn(`⚠️ [Chrome] No se pudo eliminar ${lockFile}: ${err.message}`);
-                }
-            }
-        }
+        // Buscar recursivamente todos los archivos de bloqueo en el userDataDir
+        function findAndDeleteLockFiles(dir) {
+            if (!fs.existsSync(dir)) return;
 
-        // También buscar en subdirectorios (Default, etc.)
-        const subdirs = ['Default', 'Profile 1'];
-        for (const subdir of subdirs) {
-            const subdirPath = path.join(userDataDirPath, subdir);
-            if (fs.existsSync(subdirPath)) {
-                for (const lockFile of lockFiles) {
-                    const lockFilePath = path.join(subdirPath, lockFile);
-                    if (fs.existsSync(lockFilePath)) {
-                        try {
-                            fs.unlinkSync(lockFilePath);
-                            cleanedCount++;
-                            console.log(`🧹 [Chrome] Eliminado archivo de bloqueo en ${subdir}: ${lockFile}`);
-                        } catch (err) {
-                            console.warn(`⚠️ [Chrome] No se pudo eliminar ${subdir}/${lockFile}: ${err.message}`);
-                        }
+            const files = fs.readdirSync(dir);
+            for (const file of files) {
+                const filePath = path.join(dir, file);
+                const stats = fs.statSync(filePath);
+
+                if (stats.isDirectory()) {
+                    findAndDeleteLockFiles(filePath);
+                } else if (lockFiles.includes(file)) {
+                    try {
+                        fs.unlinkSync(filePath);
+                        cleanedCount++;
+                        console.log(`🧹 [Chrome] Eliminado archivo de bloqueo: ${filePath}`);
+                    } catch (err) {
+                        console.warn(`⚠️ [Chrome] No se pudo eliminar ${filePath}: ${err.message}`);
                     }
                 }
             }
         }
+
+        findAndDeleteLockFiles(userDataDirPath);
 
         if (cleanedCount > 0) {
             console.log(`✅ [Chrome] ${cleanedCount} archivos de bloqueo eliminados`);
@@ -203,14 +195,14 @@ async function downloadUserProfile(sessionName) {
             fs.mkdirSync(userDataDir, { recursive: true });
         }
 
-        // Limpiar archivos de bloqueo antes de extraer
-        cleanupLockFiles(userDataDir);
-
         // Extraer el zip
         const arrayBuffer = await data.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
         const zip = new AdmZip(buffer);
         zip.extractAllTo(userDataDir, true);
+
+        // Limpiar archivos de bloqueo DESPUÉS de extraer
+        cleanupLockFiles(userDataDir);
 
         console.log(`✅ [Profile] Perfil restaurado desde Supabase para ${sessionName}`);
         return true;
