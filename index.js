@@ -66,7 +66,7 @@ const supabaseTokenStore = {
             
             if (!supabase) {
                 console.warn('⚠️ [TokenStore] Supabase no configurado');
-                return null;
+                return undefined;
             }
 
             const fileName = `${sessionName}_token.json`;
@@ -78,7 +78,7 @@ const supabaseTokenStore = {
 
             if (error) {
                 console.log(`ℹ️ [TokenStore] No hay sesión guardada para ${sessionName}: ${error.message}`);
-                return null;
+                return undefined;
             }
 
             const content = await data.text();
@@ -87,7 +87,7 @@ const supabaseTokenStore = {
             return tokenData;
         } catch (error) {
             console.error(`❌ [TokenStore] Error al obtener token de Supabase: ${error.message}`);
-            return null;
+            return undefined;
         }
     },
 
@@ -573,12 +573,7 @@ async function downloadWPPSessionFiles() {
 // ============================================================
 async function initWPPConnect() {
     try {
-        // Intentar restaurar sesión desde Supabase antes de iniciar
-        const sessionRestored = await downloadWPPSessionFiles();
-        if (sessionRestored) {
-            console.log('✅ [WPPConnect] Sesión restaurada, intentando reconectar automáticamente...');
-        }
-
+        console.log('🔍 [WPPConnect] Iniciando con token store de Supabase...');
         const wpp = require('@wppconnect-team/wppconnect');
 
         const options = {
@@ -609,6 +604,8 @@ async function initWPPConnect() {
                     '--disable-renderer-backgrounding',
                 ],
             },
+            // Usar el token store personalizado de Supabase
+            tokenStore: supabaseTokenStore,
             catchQR: (base64QR, asciiQR) => {
                 state.wppQRCode = base64QR;
             },
@@ -617,14 +614,7 @@ async function initWPPConnect() {
                 if (statusSession === 'isLogged' || statusSession === 'CONNECTED') {
                     state.wppConnected = true;
                     state.wppQRCode = null;
-                    console.log('✅ [WPPConnect] Sesión conectada, iniciando subida a Supabase...');
-                    
-                    // Esperar a que WPPConnect escriba los archivos y subirlos manualmente
-                    console.log('⏰ [WPPConnect] Programando subida en 5 segundos...');
-                    setTimeout(async () => {
-                        console.log('🚀 [WPPConnect] Ejecutando función de subida...');
-                        await uploadWPPSessionFiles();
-                    }, 5000);
+                    console.log('✅ [WPPConnect] Sesión conectada, el token store de Supabase manejará la persistencia');
                 }
             },
         };
@@ -726,14 +716,7 @@ async function initWPPConnect() {
             if (status === 'CONNECTED' || status === 'isLogged') {
                 state.wppConnected = true;
                 state.wppQRCode = null;
-                console.log('✅ [WPPConnect] Sesión conectada (onStateChange), iniciando subida a Supabase...');
-                
-                // Esperar a que WPPConnect escriba los archivos y subirlos manualmente
-                console.log('⏰ [WPPConnect] Programando subida en 5 segundos...');
-                setTimeout(async () => {
-                    console.log('🚀 [WPPConnect] Ejecutando función de subida (onStateChange)...');
-                    await uploadWPPSessionFiles();
-                }, 5000);
+                console.log('✅ [WPPConnect] Sesión conectada (onStateChange), el token store de Supabase manejará la persistencia');
             }
         });
 
