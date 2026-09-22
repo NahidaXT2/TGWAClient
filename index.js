@@ -620,7 +620,9 @@ async function initWPPConnect() {
                     console.log('✅ [WPPConnect] Sesión conectada, iniciando subida a Supabase...');
                     
                     // Esperar a que WPPConnect escriba los archivos y subirlos manualmente
+                    console.log('⏰ [WPPConnect] Programando subida en 5 segundos...');
                     setTimeout(async () => {
+                        console.log('🚀 [WPPConnect] Ejecutando función de subida...');
                         await uploadWPPSessionFiles();
                     }, 5000);
                 }
@@ -724,7 +726,14 @@ async function initWPPConnect() {
             if (status === 'CONNECTED' || status === 'isLogged') {
                 state.wppConnected = true;
                 state.wppQRCode = null;
-                console.log('✅ [WPPConnect] Sesión conectada y guardada automáticamente en Supabase');
+                console.log('✅ [WPPConnect] Sesión conectada (onStateChange), iniciando subida a Supabase...');
+                
+                // Esperar a que WPPConnect escriba los archivos y subirlos manualmente
+                console.log('⏰ [WPPConnect] Programando subida en 5 segundos...');
+                setTimeout(async () => {
+                    console.log('🚀 [WPPConnect] Ejecutando función de subida (onStateChange)...');
+                    await uploadWPPSessionFiles();
+                }, 5000);
             }
         });
 
