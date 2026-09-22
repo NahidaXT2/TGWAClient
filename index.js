@@ -121,6 +121,7 @@ const supabaseTokenStore = {
 
             console.log(`✅ [TokenStore] Sesión restaurada desde Supabase para ${sessionName}`);
             console.log(`✅ [TokenStore] Campos del token:`, Object.keys(tokenData).join(', '));
+            console.log(`✅ [TokenStore] Contenido del token recuperado:`, JSON.stringify(tokenData, null, 2));
             return tokenData;
         } catch (error) {
             console.error(`❌ [TokenStore] Error al obtener token de Supabase: ${error.message}`);
