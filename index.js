@@ -449,6 +449,9 @@ async function initWPPConnect() {
     try {
         const wpp = require('@wppconnect-team/wppconnect');
 
+        console.log('🔧 [WPPConnect] Inicializando con TokenStore personalizado de Supabase');
+        console.log('🔧 [WPPConnect] TokenStore configurado:', !!supabaseTokenStore);
+
         const options = {
             session: WPP_SESSION_NAME,
             headless: true,
@@ -482,10 +485,27 @@ async function initWPPConnect() {
                 state.wppQRCode = base64QR;
             },
             statusFind: (statusSession, session) => {
+                console.log(`📊 [WPPConnect] statusFind: ${statusSession}`);
                 if (statusSession === 'isLogged' || statusSession === 'CONNECTED') {
                     state.wppConnected = true;
                     state.wppQRCode = null;
                     console.log('✅ [WPPConnect] Sesión conectada y guardada automáticamente en Supabase');
+                    
+                    // Intentar obtener el token directamente del cliente
+                    setTimeout(async () => {
+                        try {
+                            console.log('🔍 [WPPConnect] Intentando obtener token del cliente...');
+                            const token = await client.getSessionToken();
+                            if (token) {
+                                console.log('✅ [WPPConnect] Token obtenido, guardando en Supabase...');
+                                await supabaseTokenStore.setToken(WPP_SESSION_NAME, token);
+                            } else {
+                                console.log('⚠️ [WPPConnect] No se pudo obtener token del cliente');
+                            }
+                        } catch (error) {
+                            console.log('⚠️ [WPPConnect] Error al obtener token:', error.message);
+                        }
+                    }, 3000);
                 }
             },
         };
