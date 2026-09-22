@@ -438,61 +438,6 @@ async function downloadSessionFromSupabase() {
 }
 
 // ============================================================
-// Función: Enviar información de sesión a n8n
-// ============================================================
-async function sendSessionToN8N(session) {
-    try {
-        const webhookUrl = process.env.N8N_WEBHOOK_URL;
-        if (!webhookUrl) {
-            console.warn('⚠️ N8N_WEBHOOK_URL no configurado, no se enviará la sesión');
-            return;
-        }
-
-        // Intentar leer archivos de sesión de WPPConnect
-        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
-        let sessionFiles = {};
-
-        try {
-            if (fs.existsSync(tokenDir)) {
-                const files = fs.readdirSync(tokenDir);
-                for (const file of files) {
-                    const filePath = path.join(tokenDir, file);
-                    try {
-                        const content = fs.readFileSync(filePath, 'utf8');
-                        sessionFiles[file] = content;
-                    } catch (err) {
-                        console.warn(`⚠️ No se pudo leer el archivo ${file}: ${err.message}`);
-                    }
-                }
-            }
-        } catch (err) {
-            console.warn(`⚠️ No se pudo acceder a la carpeta de tokens: ${err.message}`);
-        }
-
-        const sessionData = {
-            type: 'wpp_session',
-            sessionName: WPP_SESSION_NAME,
-            timestamp: new Date().toISOString(),
-            status: 'connected',
-            tokenDirectory: tokenDir,
-            sessionFiles: sessionFiles,
-            note: 'Guarda el contenido de sessionFiles en tus secrets para persistir la sesión'
-        };
-
-        console.log('📤 Enviando información de sesión a n8n...');
-
-        const response = await axios.post(webhookUrl, sessionData, {
-            headers: { "Content-Type": "application/json" },
-            timeout: 10000,
-        });
-
-        console.log(`✅ Información de sesión enviada a n8n: ${response.status}`);
-    } catch (error) {
-        console.error(`❌ Error al enviar sesión a n8n: ${error.message}`);
-    }
-}
-
-// ============================================================
 // Función: Inicializar WPPConnect
 // ============================================================
 async function initWPPConnect() {
@@ -539,9 +484,6 @@ async function initWPPConnect() {
 
                     // Subir sesión a Supabase cuando se conecte
                     uploadSessionToSupabase();
-
-                    // Enviar información de sesión al webhook de n8n
-                    sendSessionToN8N(session);
                 }
             },
         };
@@ -646,9 +588,6 @@ async function initWPPConnect() {
 
                 // Subir sesión a Supabase cuando se conecte
                 uploadSessionToSupabase();
-
-                // Enviar información de sesión al webhook de n8n
-                sendSessionToN8N(client);
             }
         });
 
