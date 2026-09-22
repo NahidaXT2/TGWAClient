@@ -4,6 +4,7 @@ const express = require('express');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { createClient } = require('@supabase/supabase-js');
 const { TelegramClient } = require('teleproto');
 const { StringSession } = require('teleproto/sessions');
 const { NewMessage } = require('teleproto/events');
@@ -29,6 +30,18 @@ const TARGET_CHAT_ID = -1001713742924;
 const WPP_SESSION_NAME = process.env.WPP_SESSION_NAME || 'default';
 const WPP_USER_NUMBER = process.env.WPP_USER_NUMBER; // Número del usuario autorizado (opcional)
 const WPP_GROUP_ID = process.env.WPP_GROUP_ID; // ID del grupo donde responder (opcional)
+
+// ============================================================
+// Configuración — Supabase Storage
+// ============================================================
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || 'wpp-sessions';
+
+let supabase = null;
+if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+}
 
 // Diccionario de comandos de WhatsApp
 // Escribe el comando después de "/" y la respuesta que deseas enviar
@@ -290,6 +303,112 @@ async function handleWPPCommand(wpp, message) {
 }
 
 // ============================================================
+// Función: Subir archivos de sesión a Supabase
+// ============================================================
+async function uploadSessionToSupabase() {
+    try {
+        if (!supabase) {
+            console.warn('⚠️ Supabase no configurado, no se guardará la sesión');
+            return;
+        }
+
+        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
+
+        if (!fs.existsSync(tokenDir)) {
+            console.warn('⚠️ Carpeta de tokens no existe');
+            return;
+        }
+
+        const files = fs.readdirSync(tokenDir);
+        console.log(`📤 Subiendo ${files.length} archivos a Supabase...`);
+
+        for (const file of files) {
+            const filePath = path.join(tokenDir, file);
+            const fileBuffer = fs.readFileSync(filePath);
+            const fileName = `${WPP_SESSION_NAME}/${file}`;
+
+            const { data, error } = await supabase.storage
+                .from(SUPABASE_BUCKET)
+                .upload(fileName, fileBuffer, {
+                    upsert: true
+                });
+
+            if (error) {
+                console.error(`❌ Error al subir ${file}:`, error.message);
+            } else {
+                console.log(`✅ ${file} subido correctamente`);
+            }
+        }
+
+        console.log('✅ Sesión guardada en Supabase');
+    } catch (error) {
+        console.error(`❌ Error al subir sesión a Supabase: ${error.message}`);
+    }
+}
+
+// ============================================================
+// Función: Descargar archivos de sesión desde Supabase
+// ============================================================
+async function downloadSessionFromSupabase() {
+    try {
+        if (!supabase) {
+            console.warn('⚠️ Supabase no configurado, no se restaurará la sesión');
+            return false;
+        }
+
+        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
+
+        // Crear carpeta si no existe
+        if (!fs.existsSync(tokenDir)) {
+            fs.mkdirSync(tokenDir, { recursive: true });
+        }
+
+        console.log('📥 Descargando sesión desde Supabase...');
+
+        // Listar archivos de la sesión
+        const { data: files, error } = await supabase.storage
+            .from(SUPABASE_BUCKET)
+            .list(WPP_SESSION_NAME);
+
+        if (error) {
+            console.error('❌ Error al listar archivos:', error.message);
+            return false;
+        }
+
+        if (!files || files.length === 0) {
+            console.log('ℹ️ No hay archivos de sesión en Supabase');
+            return false;
+        }
+
+        // Descargar cada archivo
+        for (const file of files) {
+            if (file.name === '') continue; // Ignorar carpetas
+
+            const fileName = `${WPP_SESSION_NAME}/${file.name}`;
+            const { data: fileData, error: downloadError } = await supabase.storage
+                .from(SUPABASE_BUCKET)
+                .download(fileName);
+
+            if (downloadError) {
+                console.error(`❌ Error al descargar ${file.name}:`, downloadError.message);
+                continue;
+            }
+
+            const filePath = path.join(tokenDir, file.name);
+            const buffer = Buffer.from(await fileData.arrayBuffer());
+            fs.writeFileSync(filePath, buffer);
+            console.log(`✅ ${file.name} descargado`);
+        }
+
+        console.log('✅ Sesión restaurada desde Supabase');
+        return true;
+    } catch (error) {
+        console.error(`❌ Error al descargar sesión de Supabase: ${error.message}`);
+        return false;
+    }
+}
+
+// ============================================================
 // Función: Enviar información de sesión a n8n
 // ============================================================
 async function sendSessionToN8N(session) {
@@ -349,6 +468,9 @@ async function sendSessionToN8N(session) {
 // ============================================================
 async function initWPPConnect() {
     try {
+        // Intentar restaurar sesión desde Supabase antes de iniciar
+        const sessionRestored = await downloadSessionFromSupabase();
+
         const wpp = require('@wppconnect-team/wppconnect');
 
         const options = {
@@ -385,6 +507,9 @@ async function initWPPConnect() {
                 if (statusSession === 'isLogged' || statusSession === 'CONNECTED') {
                     state.wppConnected = true;
                     state.wppQRCode = null;
+
+                    // Subir sesión a Supabase cuando se conecte
+                    uploadSessionToSupabase();
 
                     // Enviar información de sesión al webhook de n8n
                     sendSessionToN8N(session);
@@ -489,6 +614,9 @@ async function initWPPConnect() {
             if (status === 'CONNECTED' || status === 'isLogged') {
                 state.wppConnected = true;
                 state.wppQRCode = null;
+
+                // Subir sesión a Supabase cuando se conecte
+                uploadSessionToSupabase();
 
                 // Enviar información de sesión al webhook de n8n
                 sendSessionToN8N(client);
