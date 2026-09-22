@@ -343,24 +343,29 @@ async function uploadSessionToSupabase() {
         for (const file of files) {
             const filePath = path.join(tokenDir, file);
 
-            // Omitir directorios, solo procesar archivos
-            if (!fs.statSync(filePath).isFile()) {
+            try {
+                // Omitir directorios, solo procesar archivos
+                if (!fs.statSync(filePath).isFile()) {
+                    continue;
+                }
+
+                const fileBuffer = fs.readFileSync(filePath);
+                const fileName = `${WPP_SESSION_NAME}/${file}`;
+
+                const { data, error } = await supabase.storage
+                    .from(SUPABASE_BUCKET)
+                    .upload(fileName, fileBuffer, {
+                        upsert: true
+                    });
+
+                if (error) {
+                    console.error(`❌ Error al subir ${file}:`, error.message);
+                } else {
+                    console.log(`✅ ${file} subido correctamente`);
+                }
+            } catch (fileError) {
+                console.warn(`⚠️ Omitiendo ${file}: ${fileError.message}`);
                 continue;
-            }
-
-            const fileBuffer = fs.readFileSync(filePath);
-            const fileName = `${WPP_SESSION_NAME}/${file}`;
-
-            const { data, error } = await supabase.storage
-                .from(SUPABASE_BUCKET)
-                .upload(fileName, fileBuffer, {
-                    upsert: true
-                });
-
-            if (error) {
-                console.error(`❌ Error al subir ${file}:`, error.message);
-            } else {
-                console.log(`✅ ${file} subido correctamente`);
             }
         }
 
