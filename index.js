@@ -62,6 +62,27 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
 // Funciones de gestión de userDataDir (Perfil de Chrome)
 // ============================================================
 
+// Matar procesos de Chrome zombies que puedan quedar de ejecuciones anteriores
+async function killZombieChromeProcesses() {
+    try {
+        const { exec } = require('child_process');
+        const util = require('util');
+        const execAsync = util.promisify(exec);
+
+        // En Linux/Docker, matar procesos de chromium/chrome
+        try {
+            await execAsync('pkill -9 chromium-browser || true');
+            await execAsync('pkill -9 chrome || true');
+            console.log('🧹 [Chrome] Procesos Chrome zombies eliminados');
+        } catch (err) {
+            // Es normal si no hay procesos ejecutándose
+            console.log('ℹ️ [Chrome] No se encontraron procesos Chrome zombies');
+        }
+    } catch (error) {
+        console.warn(`⚠️ [Chrome] Error al eliminar procesos zombies: ${error.message}`);
+    }
+}
+
 // Eliminar archivos de bloqueo de Chrome para evitar errores de "browser already running"
 function cleanupLockFiles(userDataDirPath) {
     try {
@@ -71,14 +92,40 @@ function cleanupLockFiles(userDataDirPath) {
         for (const lockFile of lockFiles) {
             const lockFilePath = path.join(userDataDirPath, lockFile);
             if (fs.existsSync(lockFilePath)) {
-                fs.unlinkSync(lockFilePath);
-                cleanedCount++;
-                console.log(`🧹 [Chrome] Eliminado archivo de bloqueo: ${lockFile}`);
+                try {
+                    fs.unlinkSync(lockFilePath);
+                    cleanedCount++;
+                    console.log(`🧹 [Chrome] Eliminado archivo de bloqueo: ${lockFile}`);
+                } catch (err) {
+                    console.warn(`⚠️ [Chrome] No se pudo eliminar ${lockFile}: ${err.message}`);
+                }
+            }
+        }
+
+        // También buscar en subdirectorios (Default, etc.)
+        const subdirs = ['Default', 'Profile 1'];
+        for (const subdir of subdirs) {
+            const subdirPath = path.join(userDataDirPath, subdir);
+            if (fs.existsSync(subdirPath)) {
+                for (const lockFile of lockFiles) {
+                    const lockFilePath = path.join(subdirPath, lockFile);
+                    if (fs.existsSync(lockFilePath)) {
+                        try {
+                            fs.unlinkSync(lockFilePath);
+                            cleanedCount++;
+                            console.log(`🧹 [Chrome] Eliminado archivo de bloqueo en ${subdir}: ${lockFile}`);
+                        } catch (err) {
+                            console.warn(`⚠️ [Chrome] No se pudo eliminar ${subdir}/${lockFile}: ${err.message}`);
+                        }
+                    }
+                }
             }
         }
 
         if (cleanedCount > 0) {
             console.log(`✅ [Chrome] ${cleanedCount} archivos de bloqueo eliminados`);
+        } else {
+            console.log(`ℹ️ [Chrome] No se encontraron archivos de bloqueo para limpiar`);
         }
     } catch (error) {
         console.error(`❌ [Chrome] Error al limpiar archivos de bloqueo: ${error.message}`);
@@ -450,6 +497,9 @@ async function initWPPConnect() {
 
         // Configurar userDataDir para persistencia de sesión Multi-Device
         const userDataDir = path.join(__dirname, 'tokens', `wpp-profile-${WPP_SESSION_NAME}`);
+
+        // Matar procesos Chrome zombies antes de iniciar
+        await killZombieChromeProcesses();
 
         // Descargar perfil desde Supabase si existe
         const profileRestored = await downloadUserProfile(WPP_SESSION_NAME);
