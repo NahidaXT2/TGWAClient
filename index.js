@@ -139,25 +139,29 @@ function cleanupCacheDirectories(userDataDirPath) {
         for (const cacheDir of cacheDirs) {
             const cachePath = path.join(userDataDirPath, cacheDir);
             if (fs.existsSync(cachePath)) {
-                const getDirSize = (dirPath) => {
-                    let size = 0;
-                    const files = fs.readdirSync(dirPath);
-                    for (const file of files) {
-                        const filePath = path.join(dirPath, file);
-                        const stats = fs.statSync(filePath);
-                        if (stats.isDirectory()) {
-                            size += getDirSize(filePath);
-                        } else {
-                            size += stats.size;
+                try {
+                    const getDirSize = (dirPath) => {
+                        let size = 0;
+                        const files = fs.readdirSync(dirPath);
+                        for (const file of files) {
+                            const filePath = path.join(dirPath, file);
+                            const stats = fs.statSync(filePath);
+                            if (stats.isDirectory()) {
+                                size += getDirSize(filePath);
+                            } else {
+                                size += stats.size;
+                            }
                         }
-                    }
-                    return size;
-                };
+                        return size;
+                    };
 
-                const dirSize = getDirSize(cachePath);
-                fs.rmSync(cachePath, { recursive: true, force: true });
-                cleanedSize += dirSize;
-                console.log(`🧹 [Chrome] Eliminado caché: ${cacheDir} (${(dirSize / 1024 / 1024).toFixed(2)} MB)`);
+                    const dirSize = getDirSize(cachePath);
+                    fs.rmSync(cachePath, { recursive: true, force: true, maxRetries: 3 });
+                    cleanedSize += dirSize;
+                    console.log(`🧹 [Chrome] Eliminado caché: ${cacheDir} (${(dirSize / 1024 / 1024).toFixed(2)} MB)`);
+                } catch (err) {
+                    console.warn(`⚠️ [Chrome] No se pudo eliminar ${cacheDir}: ${err.message}`);
+                }
             }
         }
 
@@ -359,6 +363,7 @@ const state = {
     wppClient: null,
     wppUserDataDir: null,
     wppRestartCount: 0,
+    wppIsRestarting: false,
 };
 
 // ============================================================
@@ -544,9 +549,10 @@ async function initWPPConnect() {
             },
             statusFind: (statusSession) => {
                 console.log(`📊 [WPPConnect] statusFind: ${statusSession}`);
-                if (['isLogged', 'CONNECTED', 'qrReadSuccess'].includes(statusSession)) {
+                if (['isLogged', 'CONNECTED'].includes(statusSession)) {
                     state.wppConnected = true;
                     state.wppQRCode = null;
+                    state.wppRestartCount = 0; // Reset counter on successful connection
 
                     // Subir perfil a Supabase cuando la sesión se conecte exitosamente
                     uploadUserProfile(WPP_SESSION_NAME, userDataDir).catch(err => {
@@ -562,6 +568,13 @@ async function initWPPConnect() {
                         return;
                     }
 
+                    // Prevenir múltiples reinicios simultáneos
+                    if (state.wppIsRestarting) {
+                        console.log('ℹ️ [WPPConnect] Ya hay un reinicio en progreso, ignorando...');
+                        return;
+                    }
+
+                    state.wppIsRestarting = true;
                     state.wppRestartCount++;
                     console.log('🔄 [WPPConnect] Eliminando perfil local y de Supabase para forzar nueva autenticación...');
 
@@ -587,7 +600,10 @@ async function initWPPConnect() {
 
                     // Reiniciar WPPConnect con perfil nuevo
                     console.log('🔄 [WPPConnect] Reiniciando WPPConnect con perfil nuevo...');
-                    setTimeout(() => initWPPConnect(), 2000);
+                    setTimeout(() => {
+                        state.wppIsRestarting = false;
+                        initWPPConnect();
+                    }, 2000);
                 }
             },
         };
@@ -647,6 +663,7 @@ async function initWPPConnect() {
             if (['CONNECTED', 'isLogged'].includes(status)) {
                 state.wppConnected = true;
                 state.wppQRCode = null;
+                state.wppRestartCount = 0; // Reset counter on successful connection
 
                 // Subir perfil a Supabase cuando el estado cambie a conectado
                 uploadUserProfile(WPP_SESSION_NAME, userDataDir).catch(err => {
