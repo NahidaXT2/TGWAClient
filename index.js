@@ -325,7 +325,7 @@ async function uploadSessionToSupabase() {
             return;
         }
 
-        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
+        const tokenDir = path.join(__dirname, WPP_SESSION_NAME);
 
         if (!fs.existsSync(tokenDir)) {
             console.warn('⚠️ Carpeta de tokens no existe');
@@ -385,7 +385,7 @@ async function downloadSessionFromSupabase() {
             return false;
         }
 
-        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
+        const tokenDir = path.join(__dirname, WPP_SESSION_NAME);
 
         // Crear carpeta si no existe
         if (!fs.existsSync(tokenDir)) {
