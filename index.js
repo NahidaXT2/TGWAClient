@@ -28,6 +28,7 @@ const TARGET_CHAT_ID = -1001713742924;
 // ============================================================
 const WPP_SESSION_NAME = process.env.WPP_SESSION_NAME || 'default';
 const WPP_USER_NUMBER = process.env.WPP_USER_NUMBER; // Número del usuario autorizado (opcional)
+const WPP_GROUP_ID = process.env.WPP_GROUP_ID; // ID del grupo donde responder (opcional)
 
 // Diccionario de comandos de WhatsApp
 // Escribe el comando después de "/" y la respuesta que deseas enviar
@@ -405,6 +406,20 @@ async function initWPPConnect() {
                 // Ignorar mensajes del propio bot para evitar bucles infinitos
                 if (message.fromMe && state.lastBotMessageId === message.id.id) {
                     console.log('⏭️ Ignorando mensaje propio del bot');
+                    return;
+                }
+
+                // Si hay un grupo configurado, verificar que el mensaje sea para ese grupo
+                if (WPP_GROUP_ID) {
+                    // Verificar que el mensaje sea del usuario (fromMe: true) y sea para el grupo correcto
+                    if (message.fromMe && message.to === WPP_GROUP_ID) {
+                        console.log('✅ Mensaje propio del usuario en el grupo objetivo');
+                        await handleWPPCommand(client, message);
+                        return;
+                    }
+
+                    // Si no es del usuario o no es para el grupo correcto, ignorar
+                    console.log('⏭️ Mensaje no cumple con los criterios del grupo');
                     return;
                 }
 
