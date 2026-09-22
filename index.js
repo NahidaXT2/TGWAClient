@@ -397,7 +397,9 @@ async function initWPPConnect() {
                     fromMe: message.fromMe,
                     body: message.body,
                     type: message.type,
-                    id: message.id
+                    id: message.id,
+                    isGroupMsg: message.isGroupMsg,
+                    to: message.to
                 });
 
                 // Ignorar mensajes del propio bot para evitar bucles infinitos
@@ -406,19 +408,73 @@ async function initWPPConnect() {
                     return;
                 }
 
-                // Si hay un número de usuario configurado, solo responder a ese número
+                // Si hay un número de usuario configurado, filtrar por ese número
                 if (WPP_USER_NUMBER) {
-                    const userNumber = message.from.replace('@c.us', '').replace('@s.whatsapp.net', '');
+                    // Extraer el número de diferentes formatos
+                    let userNumber = message.from;
+
+                    // Eliminar sufijos de dominio de WhatsApp
+                    userNumber = userNumber.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
+
                     console.log('🔍 Verificando número:', userNumber, 'vs', WPP_USER_NUMBER);
-                    if (userNumber !== WPP_USER_NUMBER) {
-                        console.log('⏭️ Mensaje de número no autorizado');
-                        return;
+
+                    // Si es un mensaje de grupo, verificar si el remitente es el usuario autorizado
+                    if (message.isGroupMsg || message.from.includes('@g.us')) {
+                        // En grupos, verificar si el mensaje es del usuario autorizado
+                        if (userNumber !== WPP_USER_NUMBER) {
+                            console.log('⏭️ Mensaje de grupo de usuario no autorizado');
+                            return;
+                        }
+                    } else {
+                        // En chat individual, verificar si es el usuario autorizado
+                        if (userNumber !== WPP_USER_NUMBER) {
+                            console.log('⏭️ Mensaje de chat no autorizado');
+                            return;
+                        }
                     }
                 }
 
                 await handleWPPCommand(client, message);
             } catch (error) {
                 console.error(`❌ [WPPConnect] Error en handler de mensaje: ${error.message}`);
+            }
+        });
+
+        // Escuchar también mensajes propios (para cuando te envías mensajes a ti mismo)
+        client.onAck(async (ack) => {
+            try {
+                console.log('📩 ACK recibido:', ack);
+            } catch (error) {
+                console.error(`❌ [WPPConnect] Error en handler de ACK: ${error.message}`);
+            }
+        });
+
+        // Escuchar eventos de mensajes en general (incluyendo propios)
+        client.onAnyMessage(async (message) => {
+            try {
+                console.log('📩 Mensaje ANY recibido:', {
+                    from: message.from,
+                    fromMe: message.fromMe,
+                    body: message.body,
+                    type: message.type,
+                    id: message.id,
+                    isGroupMsg: message.isGroupMsg,
+                    to: message.to
+                });
+
+                // Solo procesar comandos si es del usuario autorizado
+                if (WPP_USER_NUMBER) {
+                    let userNumber = message.from;
+                    userNumber = userNumber.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '');
+
+                    if (userNumber === WPP_USER_NUMBER) {
+                        await handleWPPCommand(client, message);
+                    }
+                } else {
+                    await handleWPPCommand(client, message);
+                }
+            } catch (error) {
+                console.error(`❌ [WPPConnect] Error en handler de anyMessage: ${error.message}`);
             }
         });
 
