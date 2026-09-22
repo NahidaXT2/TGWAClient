@@ -443,14 +443,143 @@ async function handleWPPCommand(wpp, message) {
 
 
 // ============================================================
+// Función: Subir archivos de sesión de WPPConnect manualmente
+// ============================================================
+async function uploadWPPSessionFiles() {
+    try {
+        if (!supabase) {
+            console.warn('⚠️ Supabase no configurado, no se guardará la sesión');
+            return;
+        }
+
+        // WPPConnect guarda los archivos en /app/tokens/{sessionName}
+        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
+        
+        console.log(`🔍 [WPPConnect] Buscando archivos de sesión en: ${tokenDir}`);
+
+        if (!fs.existsSync(tokenDir)) {
+            console.warn(`⚠️ [WPPConnect] Directorio no existe: ${tokenDir}`);
+            return;
+        }
+
+        const files = fs.readdirSync(tokenDir);
+        console.log(`📂 [WPPConnect] Archivos encontrados: ${files.join(', ')}`);
+
+        if (files.length === 0) {
+            console.warn('⚠️ [WPPConnect] No hay archivos para subir');
+            return;
+        }
+
+        let uploadedCount = 0;
+        for (const file of files) {
+            const filePath = path.join(tokenDir, file);
+
+            try {
+                if (!fs.statSync(filePath).isFile()) {
+                    continue;
+                }
+
+                const fileBuffer = fs.readFileSync(filePath);
+                const fileName = `${WPP_SESSION_NAME}/${file}`;
+
+                const { data, error } = await supabase.storage
+                    .from(SUPABASE_BUCKET)
+                    .upload(fileName, fileBuffer, {
+                        upsert: true
+                    });
+
+                if (error) {
+                    console.error(`❌ [WPPConnect] Error al subir ${file}:`, error.message);
+                } else {
+                    console.log(`✅ [WPPConnect] ${file} subido correctamente`);
+                    uploadedCount++;
+                }
+            } catch (fileError) {
+                console.warn(`⚠️ [WPPConnect] Omitiendo ${file}: ${fileError.message}`);
+                continue;
+            }
+        }
+
+        console.log(`✅ [WPPConnect] Sesión guardada en Supabase (${uploadedCount} archivos)`);
+    } catch (error) {
+        console.error(`❌ [WPPConnect] Error al subir sesión: ${error.message}`);
+    }
+}
+
+// ============================================================
+// Función: Descargar archivos de sesión de WPPConnect manualmente
+// ============================================================
+async function downloadWPPSessionFiles() {
+    try {
+        if (!supabase) {
+            console.warn('⚠️ Supabase no configurado, no se restaurará la sesión');
+            return false;
+        }
+
+        const tokenDir = path.join(__dirname, 'tokens', WPP_SESSION_NAME);
+
+        // Crear carpeta si no existe
+        if (!fs.existsSync(tokenDir)) {
+            fs.mkdirSync(tokenDir, { recursive: true });
+        }
+
+        console.log('📥 [WPPConnect] Descargando sesión desde Supabase...');
+
+        const { data: files, error } = await supabase.storage
+            .from(SUPABASE_BUCKET)
+            .list(WPP_SESSION_NAME);
+
+        if (error) {
+            console.error('❌ [WPPConnect] Error al listar archivos:', error.message);
+            return false;
+        }
+
+        if (!files || files.length === 0) {
+            console.log('ℹ️ [WPPConnect] No hay archivos de sesión en Supabase');
+            return false;
+        }
+
+        let downloadedCount = 0;
+        for (const file of files) {
+            if (file.name === '') continue;
+
+            const fileName = `${WPP_SESSION_NAME}/${file.name}`;
+            const { data: fileData, error: downloadError } = await supabase.storage
+                .from(SUPABASE_BUCKET)
+                .download(fileName);
+
+            if (downloadError) {
+                console.error(`❌ [WPPConnect] Error al descargar ${file.name}:`, downloadError.message);
+                continue;
+            }
+
+            const filePath = path.join(tokenDir, file.name);
+            const buffer = Buffer.from(await fileData.arrayBuffer());
+            fs.writeFileSync(filePath, buffer);
+            console.log(`✅ [WPPConnect] ${file.name} descargado`);
+            downloadedCount++;
+        }
+
+        console.log(`✅ [WPPConnect] Sesión restaurada desde Supabase (${downloadedCount} archivos)`);
+        return true;
+    } catch (error) {
+        console.error(`❌ [WPPConnect] Error al descargar sesión: ${error.message}`);
+        return false;
+    }
+}
+
+// ============================================================
 // Función: Inicializar WPPConnect
 // ============================================================
 async function initWPPConnect() {
     try {
-        const wpp = require('@wppconnect-team/wppconnect');
+        // Intentar restaurar sesión desde Supabase antes de iniciar
+        const sessionRestored = await downloadWPPSessionFiles();
+        if (sessionRestored) {
+            console.log('✅ [WPPConnect] Sesión restaurada, intentando reconectar automáticamente...');
+        }
 
-        console.log('🔧 [WPPConnect] Inicializando con TokenStore personalizado de Supabase');
-        console.log('🔧 [WPPConnect] TokenStore configurado:', !!supabaseTokenStore);
+        const wpp = require('@wppconnect-team/wppconnect');
 
         const options = {
             session: WPP_SESSION_NAME,
@@ -458,7 +587,6 @@ async function initWPPConnect() {
             logV1: false,
             logV2: false,
             logV3: false,
-            tokenStore: supabaseTokenStore,
             puppeteerOptions: {
                 executablePath: '/usr/bin/chromium-browser',
                 args: [
@@ -489,23 +617,12 @@ async function initWPPConnect() {
                 if (statusSession === 'isLogged' || statusSession === 'CONNECTED') {
                     state.wppConnected = true;
                     state.wppQRCode = null;
-                    console.log('✅ [WPPConnect] Sesión conectada y guardada automáticamente en Supabase');
+                    console.log('✅ [WPPConnect] Sesión conectada, iniciando subida a Supabase...');
                     
-                    // Intentar obtener el token directamente del cliente
+                    // Esperar a que WPPConnect escriba los archivos y subirlos manualmente
                     setTimeout(async () => {
-                        try {
-                            console.log('🔍 [WPPConnect] Intentando obtener token del cliente...');
-                            const token = await client.getSessionToken();
-                            if (token) {
-                                console.log('✅ [WPPConnect] Token obtenido, guardando en Supabase...');
-                                await supabaseTokenStore.setToken(WPP_SESSION_NAME, token);
-                            } else {
-                                console.log('⚠️ [WPPConnect] No se pudo obtener token del cliente');
-                            }
-                        } catch (error) {
-                            console.log('⚠️ [WPPConnect] Error al obtener token:', error.message);
-                        }
-                    }, 3000);
+                        await uploadWPPSessionFiles();
+                    }, 5000);
                 }
             },
         };
