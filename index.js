@@ -62,35 +62,50 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
 const supabaseTokenStore = {
     getToken: async (sessionName) => {
         try {
-            if (!supabase) return null;
+            console.log(`🔍 [TokenStore] getToken llamado para: ${sessionName}`);
+            
+            if (!supabase) {
+                console.warn('⚠️ [TokenStore] Supabase no configurado');
+                return null;
+            }
 
             const fileName = `${sessionName}_token.json`;
+            console.log(`🔍 [TokenStore] Buscando archivo: ${fileName}`);
+            
             const { data, error } = await supabase.storage
                 .from(SUPABASE_BUCKET)
                 .download(fileName);
 
             if (error) {
-                console.log(`ℹ️ No hay sesión guardada para ${sessionName}`);
+                console.log(`ℹ️ [TokenStore] No hay sesión guardada para ${sessionName}: ${error.message}`);
                 return null;
             }
 
             const content = await data.text();
             const tokenData = JSON.parse(content);
-            console.log(`✅ Sesión restaurada desde Supabase para ${sessionName}`);
+            console.log(`✅ [TokenStore] Sesión restaurada desde Supabase para ${sessionName}`);
             return tokenData;
         } catch (error) {
-            console.error(`❌ Error al obtener token de Supabase: ${error.message}`);
+            console.error(`❌ [TokenStore] Error al obtener token de Supabase: ${error.message}`);
             return null;
         }
     },
 
     setToken: async (sessionName, tokenData) => {
         try {
-            if (!supabase) return false;
+            console.log(`💾 [TokenStore] setToken llamado para: ${sessionName}`);
+            console.log(`📊 [TokenStore] Tamaño del token: ${JSON.stringify(tokenData).length} bytes`);
+            
+            if (!supabase) {
+                console.warn('⚠️ [TokenStore] Supabase no configurado');
+                return false;
+            }
 
             const fileName = `${sessionName}_token.json`;
             const content = JSON.stringify(tokenData);
             const fileBuffer = Buffer.from(content);
+
+            console.log(`📤 [TokenStore] Subiendo archivo: ${fileName}`);
 
             const { data, error } = await supabase.storage
                 .from(SUPABASE_BUCKET)
@@ -99,20 +114,25 @@ const supabaseTokenStore = {
                 });
 
             if (error) {
-                console.error(`❌ Error al guardar token en Supabase: ${error.message}`);
+                console.error(`❌ [TokenStore] Error al guardar token en Supabase: ${error.message}`);
+                console.error(`❌ [TokenStore] Detalles del error:`, error);
                 return false;
             }
 
-            console.log(`✅ Sesión guardada en Supabase para ${sessionName}`);
+            console.log(`✅ [TokenStore] Sesión guardada en Supabase para ${sessionName}`);
+            console.log(`✅ [TokenStore] Archivo guardado: ${data.path}`);
             return true;
         } catch (error) {
-            console.error(`❌ Error en setToken: ${error.message}`);
+            console.error(`❌ [TokenStore] Error en setToken: ${error.message}`);
+            console.error(`❌ [TokenStore] Stack trace:`, error.stack);
             return false;
         }
     },
 
     removeToken: async (sessionName) => {
         try {
+            console.log(`🗑️ [TokenStore] removeToken llamado para: ${sessionName}`);
+            
             if (!supabase) return false;
 
             const fileName = `${sessionName}_token.json`;
@@ -121,20 +141,22 @@ const supabaseTokenStore = {
                 .remove([fileName]);
 
             if (error) {
-                console.error(`❌ Error al eliminar token de Supabase: ${error.message}`);
+                console.error(`❌ [TokenStore] Error al eliminar token de Supabase: ${error.message}`);
                 return false;
             }
 
-            console.log(`✅ Sesión eliminada de Supabase para ${sessionName}`);
+            console.log(`✅ [TokenStore] Sesión eliminada de Supabase para ${sessionName}`);
             return true;
         } catch (error) {
-            console.error(`❌ Error en removeToken: ${error.message}`);
+            console.error(`❌ [TokenStore] Error en removeToken: ${error.message}`);
             return false;
         }
     },
 
     listTokens: async () => {
         try {
+            console.log(`📋 [TokenStore] listTokens llamado`);
+            
             if (!supabase) return [];
 
             const { data: files, error } = await supabase.storage
@@ -142,7 +164,7 @@ const supabaseTokenStore = {
                 .list();
 
             if (error) {
-                console.error(`❌ Error al listar tokens: ${error.message}`);
+                console.error(`❌ [TokenStore] Error al listar tokens: ${error.message}`);
                 return [];
             }
 
@@ -150,9 +172,10 @@ const supabaseTokenStore = {
                 .filter(file => file.name.endsWith('_token.json'))
                 .map(file => file.name.replace('_token.json', ''));
 
+            console.log(`📋 [TokenStore] Tokens encontrados: ${tokenFiles.join(', ')}`);
             return tokenFiles;
         } catch (error) {
-            console.error(`❌ Error en listTokens: ${error.message}`);
+            console.error(`❌ [TokenStore] Error en listTokens: ${error.message}`);
             return [];
         }
     }
