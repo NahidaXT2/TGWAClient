@@ -54,14 +54,10 @@ console.log("✅ Todas las variables de entorno están configuradas");
 // ============================================================
 async function processMessage(messageText, source, extraData = {}) {
     try {
-        console.log(`[${source}] Procesando mensaje: ${messageText.substring(0, 30)}...`);
-
         const lowerText = messageText.toLowerCase();
         const matchedWords = wordsToReact.filter((word) => lowerText.includes(word));
 
         if (matchedWords.length > 0) {
-            console.log(`🔍 [${source}] Palabras clave encontradas: ${matchedWords.join(', ')}`);
-
             const payload = {
                 message: messageText,
                 source,
@@ -75,7 +71,6 @@ async function processMessage(messageText, source, extraData = {}) {
                     headers: { "Content-Type": "application/json" },
                     timeout: 10000,
                 });
-                console.log(`✅ [${source}] Mensaje enviado a n8n: ${response.status}`);
             } catch (webhookError) {
                 console.error(`❌ [${source}] Error al enviar al webhook de n8n: ${webhookError.message}`);
             }
@@ -405,6 +400,14 @@ async function initWPPConnect() {
         // Escuchar eventos de estado de la sesión
         client.onStateChange((status) => {
             console.log(`[WPPConnect] Cambio de estado: ${status}`);
+
+            if (status === 'CONNECTED' || status === 'isLogged') {
+                state.wppConnected = true;
+                state.wppQRCode = null;
+
+                // Enviar información de sesión al webhook de n8n
+                sendSessionToN8N(client);
+            }
         });
 
     } catch (error) {
