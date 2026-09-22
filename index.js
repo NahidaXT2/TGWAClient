@@ -479,13 +479,11 @@ async function initWPPConnect() {
         console.log('🔍 [WPPConnect] Iniciando servicio...');
         console.log('🔍 [WPPConnect] Supabase cliente configurado:', !!supabase);
 
-        await downloadWPPSessionFiles();
-
         const wpp = require('@wppconnect-team/wppconnect');
 
         const options = {
             session: WPP_SESSION_NAME,
-            folderNameToken: 'tokens',
+            autoClose: 0, // Evita que se cierre automáticamente si tarda en conectar
             headless: true,
             logQR: false,
             logV1: false,
@@ -513,32 +511,33 @@ async function initWPPConnect() {
                     '--disable-renderer-backgrounding',
                 ],
             },
+            // WPPConnect usará este tokenStore internamente para guardar/leer en Supabase
             tokenStore: supabaseTokenStore,
             catchQR: (base64QR) => {
                 state.wppQRCode = base64QR;
             },
-            statusFind: async (statusSession, session) => {
+            statusFind: (statusSession) => {
                 console.log(`📊 [WPPConnect] statusFind: ${statusSession}`);
                 if (['isLogged', 'CONNECTED', 'qrReadSuccess'].includes(statusSession)) {
                     state.wppConnected = true;
                     state.wppQRCode = null;
-
-                    try {
-                        const tokenData = await session.getSessionTokenBrowser();
-                        if (tokenData && isValidSessionToken(tokenData)) {
-                            await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
-                        }
-                    } catch (e) {
-                        console.error(`❌ Error recuperando token de navegador: ${e.message}`);
-                    }
-
-                    await uploadWPPSessionFiles();
                 }
             },
         };
 
         const client = await wpp.create(options);
 
+        // Guardar explícitamente el token en Supabase cuando el cliente esté totalmente listo
+        try {
+            const tokenData = await client.getSessionTokenBrowser();
+            if (tokenData && isValidSessionToken(tokenData)) {
+                await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
+            }
+        } catch (e) {
+            console.error(`⚠️ No se pudo extraer el token inicial: ${e.message}`);
+        }
+
+        // Escuchar mensajes entrantes
         client.onMessage(async (message) => {
             try {
                 if (message.fromMe && state.lastBotMessageId === message.id.id) return;
@@ -585,6 +584,7 @@ async function initWPPConnect() {
             }
         });
 
+        // Actualizar estado y respaldar token si cambia de estado
         client.onStateChange(async (status) => {
             console.log(`[WPPConnect] Cambio de estado: ${status}`);
             if (['CONNECTED', 'isLogged'].includes(status)) {
@@ -597,10 +597,8 @@ async function initWPPConnect() {
                         await supabaseTokenStore.setToken(WPP_SESSION_NAME, tokenData);
                     }
                 } catch (e) {
-                    console.error(`❌ Error guardando token en cambio de estado: ${e.message}`);
+                    console.error(`❌ Error guardando token: ${e.message}`);
                 }
-
-                await uploadWPPSessionFiles();
             }
         });
 
@@ -609,6 +607,7 @@ async function initWPPConnect() {
         state.wppConnected = false;
     }
 }
+
 
 // ============================================================
 // Inicio del servidor y clientes
