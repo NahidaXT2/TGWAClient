@@ -464,8 +464,10 @@ async function initWPPConnect() {
             logV1: false,
             logV2: false,
             logV3: false,
-            createOptions: {
-                browserArgs: [
+            folderName: tokenDir,
+            puppeteerOptions: {
+                executablePath: '/usr/bin/chromium-browser',
+                args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-dev-shm-usage',
