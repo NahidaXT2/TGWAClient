@@ -4,14 +4,96 @@ const express = require('express');
 const axios = require('axios');
 const WebSocket = require('ws');
 const QRCode = require('qrcode');
-const { makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const {
+    makeWASocket,
+    useMultiFileAuthState,
+    fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore,
+    Browsers,
+} = require('@whiskeysockets/baileys');
 const { createClient } = require('@supabase/supabase-js');
 const { TelegramClient } = require('teleproto');
 const { StringSession } = require('teleproto/sessions');
 const { NewMessage } = require('teleproto/events');
+const { useSupabaseAuthState } = require('./supabase-auth-state');
 
 // ============================================================
-// Configuración — TeleClient (Telegram)
+// Utilidades de privacidad
+// ============================================================
+function maskJid(jid) {
+    if (!jid) return 'unknown';
+    const s = String(jid);
+    const at = s.indexOf('@');
+    const local = at === -1 ? s : s.slice(0, at);
+    const domain = at === -1 ? '' : s.slice(at);
+
+    if (local.length <= 8) return `***${domain}`;
+    return `${local.slice(0, 3)}***${local.slice(-3)}${domain}`;
+}
+
+// ============================================================
+// Anti-loop: tracking de IDs enviados por el bot
+// ============================================================
+const sentMessageIds = new Set();
+const SENT_IDS_MAX = 500;
+
+function trackSentMessage(id) {
+    if (!id) return;
+    sentMessageIds.add(id);
+    if (sentMessageIds.size > SENT_IDS_MAX) {
+        const first = sentMessageIds.values().next().value;
+        sentMessageIds.delete(first);
+    }
+}
+
+// ============================================================
+// Caches
+// ============================================================
+function createSafeCache() {
+    const store = new Map();
+    return {
+        get: (key) => store.get(key),
+        set: (key, value) => { store.set(key, value); return true; },
+        del: (key) => {
+            if (key == null) return 0;
+            return store.delete(key) ? 1 : 0;
+        },
+        flushAll: () => { store.clear(); },
+    };
+}
+
+// ============================================================
+// Loggers
+// ============================================================
+const cacheLogger = {
+    level: 'silent',
+    fatal: () => { }, error: () => { }, warn: () => { }, info: () => { }, debug: () => { }, trace: () => { },
+    child: () => cacheLogger,
+};
+
+const socketLogger = {
+    level: 'warn',
+    fatal: (...args) => console.error('[baileys][fatal]', ...args),
+    error: (...args) => {
+        const joined = args.map((a) => (typeof a === 'string' ? a : '')).join(' ');
+
+        // 1) Timeout benigno al pedir props iniciales
+        if (joined.includes("unexpected error in 'init queries'")) return;
+
+        // 2) Reintentos de descifrado de mensajes ya procesados (fromMe / reconnects).
+        //    Benigno: el mensaje ya se procesó la primera vez. No se pierde nada.
+        //    Comenta esta línea si algún día quieres verlos de nuevo.
+        if (joined.includes('MessageCounterError') && joined.includes('Key used already')) return;
+
+        console.error('[baileys][error]', ...args);
+    },
+    warn: (...args) => console.warn('[baileys][warn ]', ...args),
+    info: () => { }, debug: () => { }, trace: () => { },
+    child: () => socketLogger,
+};
+
+// ============================================================
+// Configuración — Telegram
 // ============================================================
 const API_ID = parseInt(process.env.API_ID, 10);
 const API_HASH = process.env.API_HASH;
@@ -19,19 +101,29 @@ const SESSION_STR = process.env.TELEGRAM_SESSION;
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 const PORT = process.env.PORT || 7860;
 
-// Palabras clave para filtrar mensajes (Telegram)
-const wordsToReact = ["bug", "aprovechen", "quemen", "quemar", "rebeca", "5 soles", "gratis"];
+// ============================================================
+// Palabras clave a detectar (desde .env, separadas por comas)
+// ============================================================
+const wordsToReact = (process.env.WORDS_TO_REACT || '')
+    .split(',')
+    .map((w) => w.trim().toLowerCase())
+    .filter(Boolean); // elimina strings vacíos
 
-// Grupo objetivo de Telegram (ID con prefijo -100 para canales)
-const TARGET_CHAT_ID = -1001713742924;
+if (wordsToReact.length === 0) {
+    console.warn('⚠️ WORDS_TO_REACT no configurado o vacío. No se detectará ninguna palabra clave.');
+}
+
+const TARGET_CHAT_ID = process.env.TG_TARGET_GROUP;
 
 // ============================================================
 // Configuración — Baileys (WhatsApp)
 // ============================================================
 const WPP_SESSION_PATH = process.env.WPP_SESSION_PATH || './wpp-session';
+const WPP_SESSION_ID = process.env.WPP_SESSION_ID || 'default';
+const TARGET_WPP_GROUP = process.env.WS_TARGET_GROUP || '';
 
 // ============================================================
-// Configuración — Supabase Storage (opcional, para compatibilidad futura)
+// Configuración — Supabase
 // ============================================================
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -46,20 +138,79 @@ if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
 }
 
 // ============================================================
-// Validación de variables de entorno
+// Validación de entorno
 // ============================================================
 const requiredVars = ["API_ID", "API_HASH", "TELEGRAM_SESSION", "N8N_WEBHOOK_URL"];
-const missingVars = requiredVars.filter((varName) => !process.env[varName]);
-
+const missingVars = requiredVars.filter((v) => !process.env[v]);
 if (missingVars.length > 0) {
     console.error(`❌ Faltan las siguientes variables de entorno: ${missingVars.join(', ')}`);
     process.exit(1);
 }
 
+const supabaseVars = ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"];
+const missingSupabaseVars = supabaseVars.filter((v) => !process.env[v]);
+if (missingSupabaseVars.length > 0 && missingSupabaseVars.length < supabaseVars.length) {
+    console.warn(`⚠️ Variables de Supabase incompletas: ${missingSupabaseVars.join(', ')}`);
+} else if (missingSupabaseVars.length === 0) {
+    console.log('✅ Variables de Supabase configuradas correctamente');
+} else {
+    console.log('ℹ️ Supabase no configurado (opcional)');
+}
+
 console.log("✅ Todas las variables de entorno están configuradas");
+console.log(TARGET_WPP_GROUP
+    ? `🎯 [WhatsApp] Filtrando solo mensajes del grupo: ${maskJid(TARGET_WPP_GROUP)}`
+    : `⚠️ [WhatsApp] WS_TARGET_GROUP no configurado. Se procesarán TODOS tus chats.`);
 
 // ============================================================
-// Función reutilizable: filtro de mensajes + envío a n8n
+// Comandos WhatsApp
+// ============================================================
+const COMMANDS = {
+    now: {
+        description: 'Muestra la hora del servidor',
+        handler: async () => {
+            const now = new Date();
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const local = now.toLocaleString('es-PE', { hour12: false });
+            return [
+                `🕐 Hora del servidor:`,
+                `  • Local:  ${local}`,
+                `  • ISO:    ${now.toISOString()}`,
+                `  • TZ:     ${tz}`,
+                `  • Epoch:  ${now.getTime()}`,
+            ].join('\n');
+        },
+    },
+    ping: {
+        description: 'Verifica que el bot está vivo',
+        handler: async () => `🏓 Pong (${Date.now()})`,
+    },
+    echo: {
+        description: 'Repite el texto que envíes: /echo hola mundo',
+        handler: async ({ args }) => args.length ? args.join(' ') : '(vacío)',
+    },
+    help: {
+        description: 'Lista los comandos disponibles',
+        handler: async () => {
+            const lines = ['📋 Comandos disponibles:'];
+            for (const [name, cmd] of Object.entries(COMMANDS)) {
+                lines.push(`  /${name} — ${cmd.description}`);
+            }
+            return lines.join('\n');
+        },
+    },
+};
+
+function parseCommand(text) {
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('/')) return null;
+    const parts = trimmed.slice(1).split(/\s+/);
+    if (!parts[0]) return null;
+    return { name: parts[0].toLowerCase(), args: parts.slice(1) };
+}
+
+// ============================================================
+// WhatsApp → n8n (payload original, sin cambios)
 // ============================================================
 async function processMessage(messageText, source, extraData = {}) {
     try {
@@ -79,6 +230,8 @@ async function processMessage(messageText, source, extraData = {}) {
                 headers: { "Content-Type": "application/json" },
                 timeout: 10000,
             });
+
+            console.log(`📤 [${source}] Mensaje enviado a n8n (keywords: ${matchedWords.join(', ')})`);
         }
     } catch (error) {
         console.error(`❌ [${source}] Error procesando mensaje: ${error.message}`);
@@ -86,54 +239,142 @@ async function processMessage(messageText, source, extraData = {}) {
 }
 
 // ============================================================
-// Inicialización del cliente de Telegram (teleproto = gramjs fork)
+// Telegram → n8n (payload específico)
 // ============================================================
+// Formato enviado al webhook:
+//   {
+//     "detected_word": "bug",
+//     "message": "hola bug",
+//     "sender": "Edu"
+//   }
+// En n8n:
+//   {{ $json.detected_word }} / {{ $json.message }} - [{{ $json.sender }}]
+async function processTelegramMessage(messageText, senderName) {
+    try {
+        const lowerText = messageText.toLowerCase();
+        const matchedWords = wordsToReact.filter((word) => lowerText.includes(word));
+
+        if (matchedWords.length === 0) return;
+
+        const payload = {
+            detected_word: matchedWords[0],   // primera coincidencia
+            message: messageText,
+            sender: senderName || 'unknown',
+        };
+
+        await axios.post(N8N_WEBHOOK_URL, payload, {
+            headers: { "Content-Type": "application/json" },
+            timeout: 10000,
+        });
+
+        console.log(`📤 [telegram] Enviado a n8n (word: ${payload.detected_word})`);
+    } catch (error) {
+        console.error(`❌ [telegram] Error procesando mensaje: ${error.message}`);
+    }
+}
+
+// ============================================================
+// Telegram client
+// ============================================================
+const sessionString = SESSION_STR || '';
 const client = new TelegramClient(
-    new StringSession(SESSION_STR),
+    new StringSession(sessionString),
     API_ID,
     API_HASH,
     { connectionRetries: 5 }
 );
 
+// Resuelve un nombre legible para el remitente del mensaje.
+// Prioriza username → nombre completo → ID (como string).
+async function resolveTelegramSender(event) {
+    try {
+        const sender = await event.message.getSender();
+        if (!sender) return String(event.senderId || 'unknown');
+
+        if (sender.username) return sender.username;
+
+        const fullName = [sender.firstName, sender.lastName]
+            .filter(Boolean)
+            .join(' ')
+            .trim();
+        if (fullName) return fullName;
+
+        return String(sender.id || event.senderId || 'unknown');
+    } catch (e) {
+        return String(event.senderId || 'unknown');
+    }
+}
+
 client.addEventHandler(
     async (event) => {
-        const messageText = event.message.message || "";
-        await processMessage(messageText, 'telegram', {
-            chatId: event.chatId,
-            senderId: event.senderId,
-        });
+        try {
+            const messageText = event.message.message || "";
+            if (!messageText) return;
+
+            const senderName = await resolveTelegramSender(event);
+            await processTelegramMessage(messageText, senderName);
+        } catch (err) {
+            console.error(`❌ [telegram] Error en handler: ${err.message}`);
+        }
     },
     new NewMessage({ chats: [TARGET_CHAT_ID] })
 );
 
 // ============================================================
-// Estado global de conexión
+// Estado global
 // ============================================================
 const state = {
     telegramConnected: false,
     wppConnected: false,
     wppClient: null,
     wppQRCode: null,
-    lastBotMessageId: null,
+    shuttingDown: false,
 };
 
 // ============================================================
-// Función: Inicializar WhatsApp con Baileys
+// Inicializar WhatsApp
 // ============================================================
 async function initWhatsApp() {
     try {
         console.log('🔍 [WhatsApp] Iniciando cliente Baileys...');
 
-        const { state: authState, saveCreds } = await useMultiFileAuthState(WPP_SESSION_PATH);
+        let authState, saveCreds;
+
+        if (supabase) {
+            console.log('📦 [WhatsApp] Usando Supabase para persistencia de sesión');
+            const supabaseAuth = await useSupabaseAuthState(
+                SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, WPP_SESSION_ID
+            );
+            authState = supabaseAuth.state;
+            saveCreds = supabaseAuth.saveCreds;
+        } else {
+            console.log('📁 [WhatsApp] Usando sistema de archivos local para persistencia');
+            const fileAuth = await useMultiFileAuthState(WPP_SESSION_PATH);
+            authState = fileAuth.state;
+            saveCreds = fileAuth.saveCreds;
+        }
+
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        console.log(`📡 [WhatsApp] Baileys version: ${version.join('.')} (latest: ${isLatest})`);
 
         const wpp = makeWASocket({
-            auth: authState,
+            version,
+            auth: {
+                creds: authState.creds,
+                keys: makeCacheableSignalKeyStore(authState.keys, cacheLogger),
+            },
+            browser: Browsers.ubuntu('Chrome'),
+            printQRInTerminal: false,
+            emitOwnEvents: true,
+            shouldSyncHistoryMessage: () => false,
+            syncFullHistory: false,
+            connectTimeoutMs: 60_000,
+            logger: socketLogger,
+            msgRetryCounterCache: createSafeCache(),
         });
 
-        // Guardar credenciales automáticamente
         wpp.ev.on('creds.update', saveCreds);
 
-        // Conexión exitosa
         wpp.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
 
@@ -143,119 +384,154 @@ async function initWhatsApp() {
                 state.wppConnected = true;
                 state.wppQRCode = null;
                 console.log('✅ [WhatsApp] Conectado exitosamente');
-                console.log(`📋 Mi ID: ${wpp.user?.id || 'desconocido'}`);
             } else if (connection === 'close') {
                 state.wppConnected = false;
                 console.log('⚠️ [WhatsApp] Desconectado');
 
-                // Reintentar reconexión (excepto si fue logout intencional - código 401)
+                if (state.shuttingDown) {
+                    console.log('🛑 [WhatsApp] Shutdown en progreso, no se reintenta.');
+                    return;
+                }
+
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 if (statusCode !== 401) {
                     console.log('🔄 [WhatsApp] Reconectando en 5 segundos...');
                     setTimeout(initWhatsApp, 5000);
                 } else {
-                    console.log('⚠️ [WhatsApp] Sesión cerrada (401). Visita /wpp para escanear QR.');
+                    console.log('⚠️ [WhatsApp] Sesión cerrada (401). Visita /wpp/reconnect para limpiar y escanear QR nuevo.');
                 }
             }
 
-            // Manejar QR cuando está disponible — guardarlo en estado para la ruta web
             if (qr) {
                 try {
                     const qrImage = await QRCode.toDataURL(qr);
                     state.wppQRCode = qrImage;
-                    console.log('📷 [WhatsApp] QR generado (visible en http://localhost:' + PORT + '/wpp)');
+                    console.log('📷 [WhatsApp] QR generado (visible en http://localhost:' + PORT + '/wpp/qr)');
                 } catch (e) {
                     console.log('📷 [WhatsApp] QR generado');
                 }
             }
         });
 
-        // Loggear TODOS los mensajes de texto entrantes para debug
         wpp.ev.on('messages.upsert', async ({ messages }) => {
             try {
                 for (const msg of messages) {
                     if (!msg.message) continue;
 
-                    // Extraer texto del mensaje
-                    const text = msg.message.conversation
-                        || msg.message?.extendedTextMessage?.text
-                        || '';
+                    const remoteJid = msg.key.remoteJid;
+                    const fromMe = msg.key.fromMe;
+                    const msgId = msg.key.id;
+
+                    if (TARGET_WPP_GROUP && remoteJid !== TARGET_WPP_GROUP) continue;
+                    if (!fromMe) continue;
+
+                    if (sentMessageIds.has(msgId)) {
+                        sentMessageIds.delete(msgId);
+                        continue;
+                    }
+
+                    if (
+                        msg.message.protocolMessage ||
+                        msg.message.senderKeyDistributionMessage ||
+                        msg.message.reactionMessage
+                    ) continue;
+
+                    const text =
+                        msg.message.conversation ||
+                        msg.message.extendedTextMessage?.text ||
+                        msg.message.imageMessage?.caption ||
+                        msg.message.videoMessage?.caption ||
+                        '';
 
                     if (!text) continue;
 
-                    const remoteJid = msg.key.remoteJid;
-                    const fromMe = msg.key.fromMe;
-                    const isGroup = remoteJid.endsWith('@g.us');
-                    const senderNumber = msg.sender || 'desconocido';
-                    const senderName = msg.pushName || 'desconocido';
-                    const msgId = msg.key.id || 'desconocido';
+                    const senderJid = msg.key.participant || wpp.user?.id;
 
-                    // Determinar si es grupo o chat personal
-                    const chatType = isGroup ? 'grupo' : 'chat personal';
+                    const cmd = parseCommand(text);
+                    if (cmd) {
+                        console.log(`⌨️  [WhatsApp] Comando recibido: /${cmd.name}`);
 
-                    // Determinar quién escribió el mensaje
-                    let senderType;
-                    if (fromMe) {
-                        senderType = 'YO (usuario)';
-                    } else {
-                        // Verificar si es el bot (en grupos, el bot puede ser el sender)
-                        if (isGroup && senderNumber === wpp.user?.id) {
-                            senderType = 'BOT (yo en el grupo)';
-                        } else {
-                            senderType = 'OTRA PERSONA';
+                        const entry = COMMANDS[cmd.name];
+                        if (!entry) {
+                            console.log(`❓ [WhatsApp] Comando desconocido: /${cmd.name}`);
+                            continue;
                         }
+
+                        try {
+                            const reply = await entry.handler({
+                                sock: wpp,
+                                remoteJid,
+                                senderJid,
+                                args: cmd.args,
+                                msg,
+                            });
+
+                            if (reply) {
+                                const sent = await wpp.sendMessage(remoteJid, { text: reply });
+                                trackSentMessage(sent?.key?.id);
+                                console.log(`🤖 [WhatsApp] Respuesta enviada: /${cmd.name}`);
+                            }
+                        } catch (err) {
+                            console.error(`❌ [WhatsApp] Error en /${cmd.name}: ${err.message}`);
+                        }
+
+                        continue;
                     }
 
-                    // ID del remitente limpio (sin sufijo de WhatsApp)
-                    const cleanSender = senderNumber.replace('@c.us', '').replace('@s.whatsapp.net', '');
-
-                    console.log(`\n${'='.repeat(50)}`);
-                    console.log(`[WhatsApp] 📩 Mensaje recibido`);
-                    console.log(`${'='.repeat(50)}`);
-                    console.log(`  🆔 Mensaje ID:  ${msgId}`);
-                    console.log(`  👤 Remitente:    ${senderName}`);
-                    console.log(`  📱 Número:       ${cleanSender}`);
-                    console.log(`  📁 Tipo chat:    ${chatType}`);
-                    console.log(`  📛 ID del ${chatType}: ${remoteJid}`);
-                    console.log(`  🤖 ¿Es mío?:    ${fromMe ? 'Sí (yo)' : 'No'}`);
-                    console.log(`  🏷️  Origen:      ${senderType}`);
-                    console.log(`  📝 Texto:        ${text}`);
-                    console.log(`  ⏰ Timestamp:    ${new Date(msg.messageTimestamp * 1000).toISOString()}`);
-                    console.log(`${'='.repeat(50)}\n`);
+                    await processMessage(text, 'whatsapp', {
+                        chatId: remoteJid,
+                        senderId: senderJid,
+                        msgId,
+                        fromMe: true,
+                    });
                 }
             } catch (error) {
-                console.error(`❌ [WhatsApp] Error en handler de mensaje: ${error.message}`);
+                console.error(`❌ [WhatsApp] Error en handler: ${error.message}`);
             }
         });
 
-        // Guardar referencia al cliente
         state.wppClient = wpp;
 
     } catch (error) {
         console.error(`❌ [WhatsApp] Error al iniciar Baileys: ${error.message}`);
         state.wppConnected = false;
 
-        // Reintentar en 10 segundos
+        if (state.shuttingDown) return;
         console.log('🔄 [WhatsApp] Reintentando en 10 segundos...');
         setTimeout(initWhatsApp, 10000);
     }
 }
 
 // ============================================================
-// Handler para cierre graceful (SIGTERM)
+// Shutdown
 // ============================================================
 async function handleShutdown() {
+    if (state.shuttingDown) return;
+    state.shuttingDown = true;
+
     console.log('🛑 [Shutdown] Cerrando clientes...');
 
     try {
         if (state.wppClient) {
-            console.log('📱 [Shutdown] Cerrando cliente WhatsApp...');
-            await state.wppClient.logout().catch(() => {});
+            console.log('📱 [Shutdown] Cerrando cliente WhatsApp (SIN logout)...');
+            try {
+                state.wppClient.ev.removeAllListeners('creds.update');
+                state.wppClient.ev.removeAllListeners('connection.update');
+                state.wppClient.ev.removeAllListeners('messages.upsert');
+            } catch (_) { /* noop */ }
+
+            try {
+                if (typeof state.wppClient.end === 'function') {
+                    state.wppClient.end(undefined);
+                } else {
+                    state.wppClient.ws?.close();
+                }
+            } catch (_) { /* noop */ }
         }
     } catch (error) {
         console.error(`❌ [Shutdown] Error: ${error.message}`);
     } finally {
-        process.exit(0);
+        setTimeout(() => process.exit(0), 500);
     }
 }
 
@@ -263,7 +539,7 @@ process.on('SIGTERM', handleShutdown);
 process.on('SIGINT', handleShutdown);
 
 // ============================================================
-// Servidor Express
+// Express
 // ============================================================
 const app = express();
 
@@ -281,7 +557,7 @@ app.get('/telegram', (req, res) => {
         status: state.telegramConnected ? 'connected' : 'disconnected',
         service: 'Telegram (teleproto/gramjs)',
         connected: state.telegramConnected,
-        targetChatId: TARGET_CHAT_ID,
+        targetChatId: maskJid(String(TARGET_CHAT_ID)),
     });
 });
 
@@ -290,120 +566,201 @@ app.get('/wpp', (req, res) => {
         status: state.wppConnected ? 'connected' : 'disconnected',
         service: 'WhatsApp (Baileys)',
         connected: state.wppConnected,
-        myId: state.wppClient?.user?.id || null,
+        needsQR: !state.wppConnected && !state.wppQRCode,
+        myId: maskJid(state.wppClient?.user?.id) || null,
+        targetGroup: TARGET_WPP_GROUP ? maskJid(TARGET_WPP_GROUP) : null,
         sessionPath: WPP_SESSION_PATH,
     });
 });
 
-// ============================================================
-// Página web con QR de WhatsApp para escanear
-// ============================================================
+app.get('/wpp/commands', (req, res) => {
+    res.json({
+        commands: Object.entries(COMMANDS).map(([name, c]) => ({
+            name: `/${name}`,
+            description: c.description,
+        })),
+        trackedSentIds: sentMessageIds.size,
+    });
+});
+
 app.get('/wpp/qr', (req, res) => {
     const qr = state.wppQRCode;
     if (!qr) {
         return res.send(`
 <!DOCTYPE html>
-<html>
-<head>
-    <title>WhatsApp - QR</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
-        .container { text-align: center; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; }
-        #qr-image { max-width: 300px; margin: 20px 0; }
-        .status { margin-top: 20px; padding: 10px; border-radius: 5px; background: #e7f3ff; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📱 Vincular WhatsApp</h1>
-        <div id="qr-container"><p>Cargando código QR...</p></div>
-        <div class="status" id="status">Estado: ${state.wppConnected ? 'Conectado ✅' : 'Esperando QR...'}</div>
-    </div>
-    <script>
-        function checkQR() {
-            fetch('/wpp/qr-data')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.qrCode) {
-                        document.getElementById('qr-container').innerHTML = '<img id="qr-image" src="' + data.qrCode + '" alt="QR Code">';
-                        document.getElementById('status').textContent = 'Estado: QR listo para escanear';
-                    } else if (data.connected) {
-                        document.getElementById('qr-container').innerHTML = '<p>✅ Conectado</p>';
-                        document.getElementById('status').textContent = 'Estado: Conectado';
-                    } else {
-                        document.getElementById('status').textContent = 'Estado: Esperando QR...';
-                    }
-                })
-                .catch(() => {
-                    document.getElementById('status').textContent = 'Estado: Error al cargar QR';
-                });
-        }
-        setInterval(checkQR, 2000);
-        checkQR();
-    </script>
-</body>
-</html>
-        `);
+<html><head><title>WhatsApp - QR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>body{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f5f5f5}
+.container{text-align:center;padding:20px;background:#fff;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}
+.status{margin-top:20px;padding:10px;border-radius:5px;background:#e7f3ff}</style></head>
+<body><div class="container">
+<h1>📱 Vincular WhatsApp</h1>
+<div id="qr-container"><p>Cargando QR...</p></div>
+<div class="status" id="status">Estado: ${state.wppConnected ? 'Conectado ✅' : 'Esperando QR...'}</div>
+</div>
+<script>
+function checkQR(){fetch('/wpp/qr-data').then(r=>r.json()).then(d=>{
+if(d.connected){document.getElementById('qr-container').innerHTML='<p style="font-size:48px">✅</p>';document.getElementById('status').textContent='Estado: Conectado';}
+else if(d.qrCode){document.getElementById('qr-container').innerHTML='<img src="'+d.qrCode+'" style="max-width:300px" alt="QR">';document.getElementById('status').textContent='Estado: QR listo';}
+else{document.getElementById('status').textContent='Estado: Esperando QR...';}
+}).catch(()=>{document.getElementById('status').textContent='Estado: Error';});}
+setInterval(checkQR,2000);checkQR();
+</script></body></html>`);
     }
     res.send(`
 <!DOCTYPE html>
-<html>
-<head>
-    <title>WhatsApp - QR</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f5f5f5; }
-        .container { text-align: center; padding: 20px; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; }
-        #qr-image { max-width: 300px; margin: 20px 0; }
-        .status { margin-top: 20px; padding: 10px; border-radius: 5px; background: #e7f3ff; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📱 Vincular WhatsApp</h1>
-        <div id="qr-container"><img id="qr-image" src="${qr}" alt="QR Code"></div>
-        <div class="status" id="status">Estado: QR listo para escanear</div>
-    </div>
-</body>
-</html>
-    `);
+<html><head><title>WhatsApp - QR</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>body{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f5f5f5}
+.container{text-align:center;padding:20px;background:#fff;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,.1)}
+.status{margin-top:20px;padding:10px;border-radius:5px;background:#e7f3ff}</style></head>
+<body><div class="container">
+<h1>📱 Vincular WhatsApp</h1>
+<div id="qr-container"><img src="${qr}" style="max-width:300px" alt="QR"></div>
+<div class="status" id="status">Estado: QR listo para escanear</div>
+</div>
+<script>
+function checkQR(){fetch('/wpp/qr-data').then(r=>r.json()).then(d=>{
+if(d.connected){document.getElementById('qr-container').innerHTML='<p style="font-size:48px">✅</p>';document.getElementById('status').textContent='Estado: Conectado';}
+else if(d.qrCode&&d.qrCode!=='${qr}'){document.querySelector('#qr-container img').src=d.qrCode;}
+}).catch(()=>{});}
+setInterval(checkQR,2000);
+</script></body></html>`);
 });
 
-// API endpoint para obtener el QR como JSON
 app.get('/wpp/qr-data', (req, res) => {
     res.json({
         qrCode: state.wppQRCode || null,
         connected: state.wppConnected,
-        myId: state.wppClient?.user?.id || null,
+        needsQR: !state.wppConnected && !state.wppQRCode,
+        myId: maskJid(state.wppClient?.user?.id) || null,
+        hasSession: state.wppConnected || !!state.wppQRCode,
     });
 });
 
+app.get('/wpp/reconnect', async (req, res) => {
+    try {
+        if (state.wppClient) {
+            try {
+                state.wppClient.ev.removeAllListeners('creds.update');
+                state.wppClient.ev.removeAllListeners('connection.update');
+                state.wppClient.ev.removeAllListeners('messages.upsert');
+                if (typeof state.wppClient.end === 'function') state.wppClient.end(undefined);
+                else state.wppClient.ws?.close();
+            } catch (_) { }
+            state.wppClient = null;
+        }
+
+        if (supabase) {
+            const { SupabaseAuthState } = require('./supabase-auth-state');
+            const authState = new SupabaseAuthState(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, WPP_SESSION_ID);
+            await authState.clearState();
+        } else {
+            const fs = require('fs');
+            if (fs.existsSync(WPP_SESSION_PATH)) fs.rmSync(WPP_SESSION_PATH, { recursive: true, force: true });
+        }
+
+        state.wppConnected = false;
+        state.wppQRCode = null;
+        sentMessageIds.clear();
+
+        initWhatsApp();
+        res.json({ success: true, message: 'Sesión limpiada. Generando nuevo QR...', storage: supabase ? 'supabase' : 'local' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/wpp/clear-session', async (req, res) => {
+    try {
+        if (state.wppClient) {
+            try {
+                state.wppClient.ev.removeAllListeners('creds.update');
+                state.wppClient.ev.removeAllListeners('connection.update');
+                state.wppClient.ev.removeAllListeners('messages.upsert');
+                if (typeof state.wppClient.end === 'function') state.wppClient.end(undefined);
+                else state.wppClient.ws?.close();
+            } catch (_) { }
+            state.wppClient = null;
+        }
+
+        if (supabase) {
+            const { SupabaseAuthState } = require('./supabase-auth-state');
+            const authState = new SupabaseAuthState(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, WPP_SESSION_ID);
+            await authState.clearState();
+        } else {
+            const fs = require('fs');
+            if (fs.existsSync(WPP_SESSION_PATH)) fs.rmSync(WPP_SESSION_PATH, { recursive: true, force: true });
+        }
+
+        state.wppConnected = false;
+        state.wppQRCode = null;
+        sentMessageIds.clear();
+
+        res.json({ success: true, message: 'Sesión eliminada.', storage: supabase ? 'supabase' : 'local' });
+        console.log('🗑️ [WhatsApp] Sesión eliminada manualmente');
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/wpp/resync-state', async (req, res) => {
+    try {
+        if (!supabase) return res.status(400).json({ success: false, error: 'Supabase no configurado' });
+
+        const { data, error: readErr } = await supabase
+            .from('whatsapp_sessions').select('session_data').eq('id', WPP_SESSION_ID).maybeSingle();
+        if (readErr) throw readErr;
+
+        const session = data?.session_data || {};
+        const keys = session.keys || {};
+        let removed = 0;
+        for (const k of Object.keys(keys)) {
+            if (k.startsWith('app-state-sync-')) { delete keys[k]; removed++; }
+        }
+
+        const { error: writeErr } = await supabase
+            .from('whatsapp_sessions')
+            .update({ session_data: { ...session, keys }, updated_at: new Date().toISOString() })
+            .eq('id', WPP_SESSION_ID);
+        if (writeErr) throw writeErr;
+
+        res.json({ success: true, removedKeys: removed });
+        console.log(`♻️ [WhatsApp] App-state reset — ${removed} keys eliminadas`);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // ============================================================
-// Inicio del servidor y clientes
+// Inicio
 // ============================================================
 app.listen(PORT, async () => {
     console.log(`🚀 Servidor Express iniciado en puerto ${PORT}`);
 
     try {
-        await client.start();
-        console.log("✅ Telegram client started and authorized");
+        if (SESSION_STR && SESSION_STR.length > 10) {
+            await client.start();
+            console.log("✅ Telegram client started and authorized");
+            try {
+                const entity = await client.getEntity(TARGET_CHAT_ID);
+                const censorTitle = (str) => {
+                    if (!str || str.length <= 2) return '*'.repeat(str?.length || 0);
+                    return str[0] + '*'.repeat(str.length - 2) + str[str.length - 1];
+                };
 
-        try {
-            const entity = await client.getEntity(TARGET_CHAT_ID);
-            console.log(`✅ Escuchando en: ${entity.title}`);
-        } catch (error) {
-            console.error(`❌ Error al acceder al grupo de Telegram: ${error.message}`);
+                console.log(`✅ Escuchando en: ${censorTitle(entity.title)}`);
+            } catch (error) {
+                console.error(`❌ Error al acceder al grupo de Telegram: ${error.message}`);
+            }
+            state.telegramConnected = true;
+            console.log("📡 Cliente de Telegram conectado y monitoreando...");
+        } else {
+            console.log("⚠️ [Telegram] No hay sesión válida configurada en TELEGRAM_SESSION");
         }
-
-        state.telegramConnected = true;
-        console.log("📡 Cliente de Telegram conectado y monitoreando...");
     } catch (error) {
         console.error(`❌ Error al iniciar el cliente de Telegram: ${error.message}`);
     }
 
-    // Iniciar WhatsApp inmediatamente (sin delay)
     initWhatsApp();
 });
