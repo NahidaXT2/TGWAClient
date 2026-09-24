@@ -670,23 +670,32 @@ app.get('/wpp/qr-data', (req, res) => {
 // WhatsApp — Resolver CAPTCHA (request-response bloqueante)
 // ============================================================
 
-app.post('/wpp/resolve-captcha', async (req, res) => {
-    const { imageUrl, caption } = req.body;
+app.get('/wpp/resolve-captcha', async (req, res) => {
+    const { imageUrl, caption, callback } = req.query;
 
     let sentMsgId;
     let captchaPromise;
 
+    // En JSONP el status HTTP SIEMPRE debe ser 200 para que el navegador ejecute el script
+    const sendJson = (data, statusCode = 200) => {
+        if (callback) {
+            res.type('application/javascript');
+            return res.status(200).send(`${callback}(${JSON.stringify(data)});`);
+        }
+        return res.status(statusCode).json(data);
+    };
+
     try {
         if (!state.wppConnected || !state.wppClient) {
-            return res.status(503).json({ success: false, error: 'WhatsApp no conectado' });
+            return sendJson({ success: false, error: 'WhatsApp no conectado' }, 503);
         }
 
         if (!TARGET_WPP_GROUP) {
-            return res.status(400).json({ success: false, error: 'WS_TARGET_GROUP no configurado' });
+            return sendJson({ success: false, error: 'WS_TARGET_GROUP no configurado' }, 400);
         }
 
         if (!imageUrl) {
-            return res.status(400).json({ success: false, error: 'imageUrl es requerido' });
+            return sendJson({ success: false, error: 'imageUrl es requerido' }, 400);
         }
 
         console.log(`📥 [WhatsApp] Descargando imagen CAPTCHA desde: ${imageUrl}`);
@@ -706,7 +715,7 @@ app.post('/wpp/resolve-captcha', async (req, res) => {
         sentMsgId = sendResult?.key?.id;
 
         if (!sentMsgId) {
-            return res.status(500).json({ success: false, error: 'No se pudo obtener el ID del mensaje enviado' });
+            return sendJson({ success: false, error: 'No se pudo obtener el ID del mensaje enviado' }, 500);
         }
 
         captchaPromise = registerPendingCaptcha(sentMsgId);
@@ -714,7 +723,7 @@ app.post('/wpp/resolve-captcha', async (req, res) => {
 
         const result = await captchaPromise;
 
-        res.json({
+        sendJson({
             success: true,
             messageId: sentMsgId,
             response: result.response,
@@ -727,11 +736,12 @@ app.post('/wpp/resolve-captcha', async (req, res) => {
         console.error(`❌ [WhatsApp] Error en resolve-captcha: ${error.message}`);
 
         if (!res.headersSent) {
-            res.status(error.message.startsWith('Timeout') ? 408 : 500).json({
+            const statusCode = error.message.startsWith('Timeout') ? 408 : 500;
+            sendJson({
                 success: false,
                 error: error.message,
                 messageId: sentMsgId || null,
-            });
+            }, statusCode);
         }
     }
 });
