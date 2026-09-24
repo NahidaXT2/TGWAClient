@@ -671,12 +671,11 @@ app.get('/wpp/qr-data', (req, res) => {
 // ============================================================
 
 app.get('/wpp/resolve-captcha', async (req, res) => {
-    const { imageUrl, caption, callback } = req.query;
+    const { imageUrl, imageBase64, caption, callback } = req.query;
 
     let sentMsgId;
     let captchaPromise;
 
-    // En JSONP el status HTTP SIEMPRE debe ser 200 para que el navegador ejecute el script
     const sendJson = (data, statusCode = 200) => {
         if (callback) {
             res.type('application/javascript');
@@ -694,18 +693,23 @@ app.get('/wpp/resolve-captcha', async (req, res) => {
             return sendJson({ success: false, error: 'WS_TARGET_GROUP no configurado' }, 400);
         }
 
-        if (!imageUrl) {
-            return sendJson({ success: false, error: 'imageUrl es requerido' }, 400);
+        let imageBuffer;
+
+        if (imageBase64) {
+            console.log(`📥 [WhatsApp] Procesando CAPTCHA recibido en Base64...`);
+            // Limpiar el encabezado data:image/png;base64,... si viene incluido
+            const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+            imageBuffer = Buffer.from(cleanBase64, 'base64');
+        } else if (imageUrl) {
+            console.log(`📥 [WhatsApp] Descargando imagen CAPTCHA desde URL: ${imageUrl}`);
+            const response = await axios.get(imageUrl, {
+                responseType: 'arraybuffer',
+                timeout: 15000,
+            });
+            imageBuffer = Buffer.from(response.data);
+        } else {
+            return sendJson({ success: false, error: 'Se requiere imageUrl o imageBase64' }, 400);
         }
-
-        console.log(`📥 [WhatsApp] Descargando imagen CAPTCHA desde: ${imageUrl}`);
-
-        const response = await axios.get(imageUrl, {
-            responseType: 'arraybuffer',
-            timeout: 15000,
-        });
-
-        const imageBuffer = Buffer.from(response.data);
 
         const sendResult = await state.wppClient.sendMessage(
             TARGET_WPP_GROUP,
