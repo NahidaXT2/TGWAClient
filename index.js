@@ -332,6 +332,25 @@ const state = {
 };
 
 // ============================================================
+// Tracking de CAPTCHAs pendientes (request-response bloqueante)
+// Almacena: messageId => { resolve, reject, timeout }
+// ============================================================
+const pendingCaptchas = new Map();
+const WPP_CAPTCHA_TIMEOUT = parseInt(process.env.WPP_CAPTCHA_TIMEOUT, 10) || 30000; // 30s por defecto
+
+function registerPendingCaptcha(messageId) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            if (pendingCaptchas.has(messageId)) {
+                pendingCaptchas.delete(messageId);
+                reject(new Error('Timeout: el usuario no respondió al CAPTCHA en ' + WPP_CAPTCHA_TIMEOUT + 'ms'));
+            }
+        }, WPP_CAPTCHA_TIMEOUT);
+        pendingCaptchas.set(messageId, { resolve, reject, timeout });
+    });
+}
+
+// ============================================================
 // Inicializar WhatsApp
 // ============================================================
 async function initWhatsApp() {
@@ -423,19 +442,8 @@ async function initWhatsApp() {
                     const msgId = msg.key.id;
 
                     if (TARGET_WPP_GROUP && remoteJid !== TARGET_WPP_GROUP) continue;
-                    if (!fromMe) continue;
 
-                    if (sentMessageIds.has(msgId)) {
-                        sentMessageIds.delete(msgId);
-                        continue;
-                    }
-
-                    if (
-                        msg.message.protocolMessage ||
-                        msg.message.senderKeyDistributionMessage ||
-                        msg.message.reactionMessage
-                    ) continue;
-
+                    // Extraer texto temprano para detección de CAPTCHA (antes de filtrar fromMe)
                     const text =
                         msg.message.conversation ||
                         msg.message.extendedTextMessage?.text ||
@@ -443,9 +451,28 @@ async function initWhatsApp() {
                         msg.message.videoMessage?.caption ||
                         '';
 
-                    if (!text) continue;
-
                     const senderJid = msg.key.participant || wpp.user?.id;
+
+                    // Detectar respuestas a mensajes de CAPTCHA
+                    const contextInfo = msg.message.extendedTextMessage?.contextInfo;
+                    const stanzaId = contextInfo?.stanzaId;
+                    if (stanzaId && pendingCaptchas.has(stanzaId) && text) {
+                        const captchaEntry = pendingCaptchas.get(stanzaId);
+                        clearTimeout(captchaEntry.timeout);
+                        pendingCaptchas.delete(stanzaId);
+                        captchaEntry.resolve({ response: text, senderJid });
+                        console.log(`📤 [WhatsApp] Respuesta de CAPTCHA recibida (${stanzaId})`);
+                        continue;
+                    }
+
+                    if (!fromMe) continue;
+
+                    if (sentMessageIds.has(msgId)) {
+                        sentMessageIds.delete(msgId);
+                        continue;
+                    }
+
+                    if (!text) continue;
 
                     const cmd = parseCommand(text);
                     if (cmd) {
@@ -542,6 +569,7 @@ process.on('SIGINT', handleShutdown);
 // Express
 // ============================================================
 const app = express();
+app.use(express.json());
 
 app.get('/', (req, res) => {
     res.json({
@@ -638,6 +666,76 @@ app.get('/wpp/qr-data', (req, res) => {
     });
 });
 
+// ============================================================
+// WhatsApp — Resolver CAPTCHA (request-response bloqueante)
+// ============================================================
+
+app.post('/wpp/resolve-captcha', async (req, res) => {
+    const { imageUrl, caption } = req.body;
+
+    let sentMsgId;
+    let captchaPromise;
+
+    try {
+        if (!state.wppConnected || !state.wppClient) {
+            return res.status(503).json({ success: false, error: 'WhatsApp no conectado' });
+        }
+
+        if (!TARGET_WPP_GROUP) {
+            return res.status(400).json({ success: false, error: 'WS_TARGET_GROUP no configurado' });
+        }
+
+        if (!imageUrl) {
+            return res.status(400).json({ success: false, error: 'imageUrl es requerido' });
+        }
+
+        console.log(`📥 [WhatsApp] Descargando imagen CAPTCHA desde: ${imageUrl}`);
+
+        const response = await axios.get(imageUrl, {
+            responseType: 'arraybuffer',
+            timeout: 15000,
+        });
+
+        const imageBuffer = Buffer.from(response.data);
+
+        const sendResult = await state.wppClient.sendMessage(
+            TARGET_WPP_GROUP,
+            { image: imageBuffer, caption: caption || '🔐 CAPTCHA — responde este mensaje:' }
+        );
+
+        sentMsgId = sendResult?.key?.id;
+
+        if (!sentMsgId) {
+            return res.status(500).json({ success: false, error: 'No se pudo obtener el ID del mensaje enviado' });
+        }
+
+        captchaPromise = registerPendingCaptcha(sentMsgId);
+        console.log(`📤 [WhatsApp] CAPTCHA enviado al grupo (${sentMsgId}). Esperando respuesta...`);
+
+        const result = await captchaPromise;
+
+        res.json({
+            success: true,
+            messageId: sentMsgId,
+            response: result.response,
+            senderJid: result.senderJid,
+            targetGroup: maskJid(TARGET_WPP_GROUP),
+        });
+
+        console.log(`✅ [WhatsApp] CAPTCHA resuelto (${sentMsgId})`);
+    } catch (error) {
+        console.error(`❌ [WhatsApp] Error en resolve-captcha: ${error.message}`);
+
+        if (!res.headersSent) {
+            res.status(error.message.startsWith('Timeout') ? 408 : 500).json({
+                success: false,
+                error: error.message,
+                messageId: sentMsgId || null,
+            });
+        }
+    }
+});
+
 app.get('/wpp/reconnect', async (req, res) => {
     try {
         if (state.wppClient) {
@@ -663,6 +761,8 @@ app.get('/wpp/reconnect', async (req, res) => {
         state.wppConnected = false;
         state.wppQRCode = null;
         sentMessageIds.clear();
+        pendingCaptchas.forEach((v) => clearTimeout(v.timeout));
+        pendingCaptchas.clear();
 
         initWhatsApp();
         res.json({ success: true, message: 'Sesión limpiada. Generando nuevo QR...', storage: supabase ? 'supabase' : 'local' });
@@ -696,6 +796,8 @@ app.get('/wpp/clear-session', async (req, res) => {
         state.wppConnected = false;
         state.wppQRCode = null;
         sentMessageIds.clear();
+        pendingCaptchas.forEach((v) => clearTimeout(v.timeout));
+        pendingCaptchas.clear();
 
         res.json({ success: true, message: 'Sesión eliminada.', storage: supabase ? 'supabase' : 'local' });
         console.log('🗑️ [WhatsApp] Sesión eliminada manualmente');
