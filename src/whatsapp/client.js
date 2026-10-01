@@ -8,7 +8,8 @@ const {
 const { createClient } = require('@supabase/supabase-js');
 const QRCode = require('qrcode');
 const { useSupabaseAuthState } = require('../../supabase-auth-state');
-const { cacheLogger, socketLogger, createSafeCache } = require('../utils/logger');
+const { cacheLogger, socketLogger } = require('../utils/logger');
+const { createSafeCache } = require('../utils/cache');
 const { maskJid } = require('../utils/privacy');
 const { COMMANDS, parseCommand } = require('./commands');
 const { processMessage } = require('./processor');
