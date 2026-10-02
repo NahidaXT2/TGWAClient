@@ -4,15 +4,15 @@
 // ============================================================
 const pendingSelections = new Map();
 
-function registerPendingSelection(messageId, videos, remoteJid, timeoutMs, profile = null) {
+function registerPendingSelection(messageId, videos, remoteJid, timeoutMs, profile = null, type = 'video', options = null) {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
             if (pendingSelections.has(messageId)) {
                 pendingSelections.delete(messageId);
-                reject(new Error('Timeout: el usuario no seleccionó un video en ' + timeoutMs + 'ms'));
+                reject(new Error('Timeout: el usuario no seleccionó en ' + timeoutMs + 'ms'));
             }
         }, timeoutMs);
-        pendingSelections.set(messageId, { resolve, reject, timeout, videos, remoteJid, profile });
+        pendingSelections.set(messageId, { resolve, reject, timeout, videos, remoteJid, profile, type, options });
     });
 }
 

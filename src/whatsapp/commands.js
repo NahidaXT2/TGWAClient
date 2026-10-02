@@ -1,7 +1,7 @@
 // ============================================================
 // Comandos WhatsApp
 // ============================================================
-const { extractUsername, fetchTikTokVideos, parseVideos, parseProfileHeader } = require('./tiktok-api');
+const { extractUsername, fetchTikTokVideos, parseVideos, parseProfileHeader, detectResponseType, parseSingleVideo, fetchSingleVideoMusicalDown, parseMusicalDownOptions } = require('./tiktok-api');
 const { registerPendingSelection } = require('./tiktok-selections');
 const { WPP_TIKTOK_TIMEOUT } = require('../config');
 const COMMANDS = {
@@ -54,6 +54,90 @@ const COMMANDS = {
 
                 const html = await fetchTikTokVideos(username);
 
+                // Detectar tipo de respuesta
+                const responseType = detectResponseType(html);
+                console.log(`[TikTok Command] Response type: ${responseType}`);
+
+                // Si es video individual, usar musicaldown para opciones múltiples
+                if (responseType === 'single') {
+                    console.log(`[TikTok Command] Processing single video with musicaldown`);
+                    await sock.sendMessage(remoteJid, { text: '� Buscando opciones de descarga...' });
+
+                    let musicalData = null;
+                    let lastError = null;
+
+                    // Intentar con musicaldown
+                    try {
+                        const musicalResponse = await fetchSingleVideoMusicalDown(input);
+                        musicalData = parseMusicalDownOptions(musicalResponse);
+                    } catch (err) {
+                        lastError = err;
+                        console.error(`[TikTok Command] MusicalDown failed: ${err.message}`);
+                    }
+
+                    // Si musicaldown falló, intentar fallback con ssstik
+                    if (!musicalData || musicalData.options.length === 0) {
+                        console.log(`[TikTok Command] Fallback to ssstik.io`);
+                        await sock.sendMessage(remoteJid, { text: '⚠️ musicaldown falló, intentando con ssstik.io...' });
+
+                        let videoData = null;
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                            try {
+                                console.log(`[TikTok Command] Parsing ssstik attempt ${attempt}/3`);
+                                videoData = parseSingleVideo(html);
+                                break;
+                            } catch (err) {
+                                lastError = err;
+                                console.error(`[TikTok Command] Parse error (attempt ${attempt}/3): ${err.message}`);
+                                if (attempt < 3) {
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                }
+                            }
+                        }
+
+                        if (!videoData || !videoData.downloadUrl) {
+                            throw lastError || new Error('No se pudo extraer el video con ningún servicio');
+                        }
+
+                        const caption = [
+                            videoData.username,
+                            videoData.description,
+                            `❤️ ${videoData.stats.likes || 'N/A'} | 💬 ${videoData.stats.comments || 'N/A'} | 📤 ${videoData.stats.shares || 'N/A'}`,
+                        ].filter(Boolean).join('\n');
+
+                        await sock.sendMessage(remoteJid, {
+                            video: { url: videoData.downloadUrl },
+                            caption,
+                        });
+
+                        console.log(`[TikTok Command] Single video sent via ssstik fallback`);
+                        return null;
+                    }
+
+                    // Presentar opciones de musicaldown
+                    console.log(`[TikTok Command] Presenting ${musicalData.options.length} format options`);
+
+                    const optionsText = musicalData.options.map((opt, i) => `${i + 1}. ${opt.label}`).join('\n');
+                    const selectionMessage = `📹 Formatos disponibles:\n\n${optionsText}\n\nResponde con el número del formato que quieres (1-${musicalData.options.length})`;
+
+                    const msg = await sock.sendMessage(remoteJid, { text: selectionMessage });
+
+                    console.log(`[TikTok Command] Selection message ID: ${msg.key.id}`);
+
+                    // Registrar selección pendiente de formato
+                    registerPendingSelection(msg.key.id, musicalData.options, remoteJid, WPP_TIKTOK_TIMEOUT, null, 'format', musicalData)
+                        .catch((err) => {
+                            console.log(`[TikTok Command] Selección timeout: ${err.message}`);
+                        });
+
+                    return null;
+                }
+
+                // Si es perfil, continuar con flujo normal
+                if (responseType !== 'profile') {
+                    return '❌ No se pudo identificar el tipo de respuesta';
+                }
+
                 let profile = null;
                 let videos = [];
                 let lastParseError = null;
@@ -61,7 +145,7 @@ const COMMANDS = {
                 // Reintentar parseado hasta 3 veces
                 for (let attempt = 1; attempt <= 3; attempt++) {
                     try {
-                        console.log(`[TikTok Command] Parsing attempt ${attempt}/3`);
+                        console.log(`[TikTok Command] Parsing profile attempt ${attempt}/3`);
                         profile = parseProfileHeader(html);
                         videos = parseVideos(html);
                         break;

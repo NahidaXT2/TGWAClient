@@ -41,6 +41,117 @@ function extractUsername(input) {
 }
 
 // ============================================================
+// Obtener video individual desde musicaldown.net con reintentos
+// ============================================================
+async function fetchSingleVideoMusicalDown(url, maxRetries = 3) {
+    const apiUrl = 'https://musicaldown.net/api/ajaxSearch';
+
+    const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Origin': 'https://musicaldown.net',
+        'Sec-GPC': '1',
+        'Connection': 'keep-alive',
+        'Referer': 'https://musicaldown.net/en',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'Priority': 'u=0',
+    };
+
+    const data = new URLSearchParams();
+    data.append('q', url);
+    data.append('cursor', '0');
+    data.append('page', '0');
+    data.append('lang', 'en');
+
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`[MusicalDown] Fetching video: ${url} (attempt ${attempt}/${maxRetries})`);
+            const response = await axios.post(apiUrl, data, {
+                headers,
+                timeout: 30000,
+            });
+
+            console.log(`[MusicalDown] Response status: ${response.status}`);
+            console.log(`[MusicalDown] Response data preview: ${JSON.stringify(response.data).substring(0, 200)}...`);
+
+            if (response.data?.status === 'ok') {
+                return response.data;
+            }
+
+            throw new Error('Invalid response status from musicaldown');
+        } catch (error) {
+            lastError = error;
+            console.error(`[MusicalDown] Error (attempt ${attempt}/${maxRetries}): ${error.message}`);
+            if (error.response) {
+                console.error(`[MusicalDown] Status: ${error.response.status}`);
+            }
+
+            if (attempt < maxRetries) {
+                const delay = attempt * 2000;
+                console.log(`[MusicalDown] Retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+    }
+
+    throw new Error(`Error fetching from musicaldown after ${maxRetries} attempts: ${lastError.message}`);
+}
+
+// ============================================================
+// Parsear respuesta de musicaldown para extraer opciones
+// ============================================================
+function parseMusicalDownOptions(jsonResponse) {
+    console.log(`[MusicalDown] Parsing options`);
+
+    const html = jsonResponse.data;
+    const $ = cheerio.load(html);
+
+    // Extraer thumbnail
+    const thumbnail = $('.image-tik img').attr('src') || null;
+
+    // Extraer descripción
+    const description = $('h3').text().trim();
+
+    // Extraer opciones de descarga
+    const options = [];
+    $('.tik-button-dl').each((index, element) => {
+        const $btn = $(element);
+        const text = $btn.text().trim();
+        const href = $btn.attr('href');
+
+        if (href) {
+            let format = 'unknown';
+            if (text.includes('MP4 HD')) format = 'mp4_hd';
+            else if (text.includes('MP4 [2]')) format = 'mp4_2';
+            else if (text.includes('MP4 [1]')) format = 'mp4_1';
+            else if (text.includes('MP3')) format = 'mp3';
+
+            options.push({
+                label: text,
+                url: href,
+                format,
+            });
+        }
+    });
+
+    console.log(`[MusicalDown] Found ${options.length} options: ${options.map(o => o.format).join(', ')}`);
+
+    return {
+        thumbnail,
+        description,
+        options,
+    };
+}
+
+// ============================================================
 // Obtener videos de TikTok desde ssstik.io con reintentos
 // ============================================================
 async function fetchTikTokVideos(username, maxRetries = 3) {
@@ -111,6 +222,77 @@ async function fetchTikTokVideos(username, maxRetries = 3) {
     }
 
     throw new Error(`Error fetching TikTok videos after ${maxRetries} attempts: ${lastError.message}`);
+}
+
+// ============================================================
+// Detectar tipo de respuesta: perfil o video individual
+// ============================================================
+function detectResponseType(html) {
+    const $ = cheerio.load(html);
+
+    if ($('.custom-video-item').length > 0) {
+        return 'profile';
+    }
+
+    if ($('.result#mainpicture').length > 0) {
+        return 'single';
+    }
+
+    console.log('[TikTok Parse] Unknown response type');
+    return 'unknown';
+}
+
+// ============================================================
+// Parsear HTML para extraer información de video individual
+// ============================================================
+function parseSingleVideo(html) {
+    console.log(`[TikTok Parse] Parsing single video`);
+
+    const $ = cheerio.load(html);
+    const result = $('.result#mainpicture');
+
+    // Avatar
+    const avatar = result.find('.result_author').attr('src') || null;
+
+    // Username
+    const username = result.find('h2').text().trim();
+
+    // Description
+    const description = result.find('.maintext').text().trim();
+
+    // Thumbnail del background-image
+    const styleMatch = html.match(/#mainpicture \.result_overlay \{[\s\S]*?background-image:\s*url\((['"]?)(.*?)\1\)/);
+    const thumbnail = styleMatch ? styleMatch[2] : null;
+
+    // Download URL (sin watermark)
+    const downloadLink = result.find('a.download_link.without_watermark').first();
+    const downloadUrl = downloadLink.attr('href') || null;
+
+    // Stats (likes, comments, shares)
+    const trendingActions = result.find('.trending-actions div');
+    const stats = {};
+    trendingActions.each((i, el) => {
+        const svg = $(el).find('svg');
+        let type = null;
+        if (svg.hasClass('feather-thumbs-up')) type = 'likes';
+        else if (svg.hasClass('feather-message-square')) type = 'comments';
+        else if (svg.hasClass('feather-share-2')) type = 'shares';
+
+        if (type) {
+            stats[type] = $(el).find('div').last().text().trim();
+        }
+    });
+
+    console.log(`[TikTok Parse] Single video: username=${username}, downloadUrl=${downloadUrl ? 'yes' : 'no'}`);
+
+    return {
+        avatar,
+        username,
+        description,
+        thumbnail,
+        downloadUrl,
+        stats,
+    };
 }
 
 // ============================================================
@@ -202,4 +384,8 @@ module.exports = {
     fetchTikTokVideos,
     parseVideos,
     parseProfileHeader,
+    detectResponseType,
+    parseSingleVideo,
+    fetchSingleVideoMusicalDown,
+    parseMusicalDownOptions,
 };

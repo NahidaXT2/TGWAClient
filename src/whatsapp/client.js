@@ -195,7 +195,32 @@ async function initWhatsApp() {
                         clearTimeout(selectionEntry.timeout);
                         pendingSelections.delete(messageId);
 
-                        const selectedVideo = selectionEntry.videos[selectedIndex - 1];
+                        const selectedItem = selectionEntry.videos[selectedIndex - 1];
+
+                        // Manejar selección de formato (video individual)
+                        if (selectionEntry.type === 'format') {
+                            const musicalData = selectionEntry.options;
+                            try {
+                                console.log(`[WhatsApp] Enviando video formato ${selectedItem.format}`);
+                                console.log(`[WhatsApp] Download URL: ${selectedItem.url?.substring(0, 100)}...`);
+
+                                const caption = musicalData.description || `Formato: ${selectedItem.label}`;
+
+                                await wpp.sendMessage(remoteJid, {
+                                    video: { url: selectedItem.url },
+                                    caption,
+                                });
+                                console.log(`[WhatsApp] Video formato enviado (${selectedItem.format})`);
+                            } catch (err) {
+                                console.error(`ERROR [WhatsApp] Error enviando video formato: ${err.message}`);
+                                console.error(`ERROR [WhatsApp] Stack: ${err.stack}`);
+                                await wpp.sendMessage(remoteJid, { text: '❌ Error al enviar el video. Intenta nuevamente.' });
+                            }
+                            continue;
+                        }
+
+                        // Manejar selección de video de perfil (flujo original)
+                        const selectedVideo = selectedItem;
                         const profile = selectionEntry.profile;
                         try {
                             console.log(`[WhatsApp] Enviando video TikTok ${selectedIndex}`);
