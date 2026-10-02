@@ -118,7 +118,10 @@ const COMMANDS = {
                 console.log(`[TikTok Command] Selection message ID: ${msg.key.id}`);
 
                 // Registrar selección pendiente (con los videos limitados y perfil)
-                registerPendingSelection(msg.key.id, videosToSend, remoteJid, WPP_TIKTOK_TIMEOUT, profile);
+                registerPendingSelection(msg.key.id, videosToSend, remoteJid, WPP_TIKTOK_TIMEOUT, profile)
+                    .catch((err) => {
+                        console.log(`[TikTok Command] Selección timeout: ${err.message}`);
+                    });
 
                 return null; // Ya enviamos mensajes manualmente
             } catch (error) {
