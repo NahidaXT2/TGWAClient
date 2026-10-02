@@ -61,39 +61,63 @@ const COMMANDS = {
 
                 console.log(`[TikTok Command] Videos to send: ${videos.length}`);
 
-                // WhatsApp tiene límite de 10 imágenes por álbum
-                const MAX_ALBUM_SIZE = 10;
-                const albumChunks = [];
+                // Limitar a 4 videos máximo
+                const MAX_VIDEOS = 4;
+                const videosToSend = videos.slice(0, MAX_VIDEOS);
 
-                for (let i = 0; i < videos.length; i += MAX_ALBUM_SIZE) {
-                    albumChunks.push(videos.slice(i, i + MAX_ALBUM_SIZE));
-                }
+                console.log(`[TikTok Command] Sending ${videosToSend.length} videos (limited from ${videos.length})`);
 
-                console.log(`[TikTok Command] Album chunks: ${albumChunks.length}`);
+                // Enviar álbum nativo con Baileys 6.7.0
+                try {
+                    // Paso 1: Enviar mensaje de álbum para obtener albumParentKey
+                    const albumMsg = await sock.sendMessage(remoteJid, {
+                        album: {
+                            expectedImageCount: videosToSend.length,
+                        },
+                    });
+                    console.log(`[TikTok Command] Album message sent, albumParentKey: ${albumMsg.key.id}`);
 
-                // Enviar cada chunk como un álbum
-                for (let chunkIndex = 0; chunkIndex < albumChunks.length; chunkIndex++) {
-                    const chunk = albumChunks[chunkIndex];
-                    const startIndex = chunkIndex * MAX_ALBUM_SIZE + 1;
+                    // Paso 2: Enviar cada imagen con el albumParentKey
+                    for (let i = 0; i < videosToSend.length; i++) {
+                        const video = videosToSend[i];
+                        console.log(`[TikTok Command] Sending image ${i + 1}/${videosToSend.length} with albumParentKey`);
 
-                    console.log(`[TikTok Command] Sending chunk ${chunkIndex + 1} with ${chunk.length} images`);
+                        try {
+                            await sock.sendMessage(remoteJid, {
+                                image: { url: video.thumbnail },
+                                caption: `${i + 1} - Duración: ${video.duration}`,
+                                albumParentKey: albumMsg.key,
+                            });
+                        } catch (err) {
+                            console.error(`[TikTok Command] Error sending image ${i + 1}: ${err.message}`);
+                        }
+                    }
 
-                    const albumItems = chunk.map((v, i) => ({
-                        image: { url: v.thumbnail },
-                        caption: `${startIndex + i}`,
-                    }));
-
-                    await sock.sendMessage(remoteJid, { album: albumItems });
+                    console.log(`[TikTok Command] Album sent successfully with ${videosToSend.length} images`);
+                } catch (err) {
+                    console.error(`[TikTok Command] Error sending album: ${err.message}`);
+                    // Fallback: enviar imágenes una por una si falla el álbum
+                    for (let i = 0; i < videosToSend.length; i++) {
+                        const video = videosToSend[i];
+                        try {
+                            await sock.sendMessage(remoteJid, {
+                                image: { url: video.thumbnail },
+                                caption: `${i + 1}`,
+                            });
+                        } catch (fallbackErr) {
+                            console.error(`[TikTok Command] Error sending image ${i + 1} (fallback): ${fallbackErr.message}`);
+                        }
+                    }
                 }
 
                 // Mensaje de instrucción para seleccionar
-                const selectionMessage = `📹 Se encontraron ${videos.length} videos.\n\nResponde con el número del video que quieres (1-${videos.length})`;
+                const selectionMessage = `📹 Se encontraron ${videos.length} videos (mostrando los primeros ${videosToSend.length}).\n\nResponde con el número del video que quieres (1-${videosToSend.length})`;
                 const msg = await sock.sendMessage(remoteJid, { text: selectionMessage });
 
                 console.log(`[TikTok Command] Selection message ID: ${msg.key.id}`);
 
-                // Registrar selección pendiente
-                registerPendingSelection(msg.key.id, videos, remoteJid, WPP_TIKTOK_TIMEOUT);
+                // Registrar selección pendiente (con los videos limitados)
+                registerPendingSelection(msg.key.id, videosToSend, remoteJid, WPP_TIKTOK_TIMEOUT);
 
                 return null; // Ya enviamos mensajes manualmente
             } catch (error) {

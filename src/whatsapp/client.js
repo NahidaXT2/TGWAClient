@@ -77,7 +77,7 @@ async function initWhatsApp() {
             browser: Browsers.ubuntu('Chrome'),
             printQRInTerminal: false,
             emitOwnEvents: true,
-            shouldSyncHistoryMessage: () => false,
+            //shouldSyncHistoryMessage: () => true,
             syncFullHistory: false,
             connectTimeoutMs: 60_000,
             logger: socketLogger,
@@ -176,12 +176,12 @@ async function initWhatsApp() {
                     const pendingForChat = Array.from(pendingSelections.entries())
                         .find(([_, entry]) => entry.remoteJid === remoteJid);
 
-                    if (pendingForChat && text) {
+                    if (pendingForChat && text && !fromMe) {
                         const [messageId, selectionEntry] = pendingForChat;
 
-                        // Validar que el remitente esta autorizado
-                        if (!WPP_ALLOWED_CHATS.includes(senderJid)) {
-                            console.log(`WARNING [WhatsApp] Respuesta de selección TikTok de cuenta no autorizada: ${maskJid(senderJid)}`);
+                        // Validar que el remitente esta autorizado (usar remoteJid para chats directos)
+                        if (!WPP_ALLOWED_CHATS.includes(remoteJid)) {
+                            console.log(`WARNING [WhatsApp] Respuesta de selección TikTok de cuenta no autorizada: ${maskJid(remoteJid)}`);
                             continue;
                         }
 

@@ -134,7 +134,10 @@ function parseVideos(html) {
         const bgMatch = styleAttr.match(/url\((['"]?)(.*?)\1\)/);
         const thumbnail = bgMatch ? bgMatch[2] : null;
 
-        console.log(`[TikTok Parse] Item ${index}: thumbnail=${thumbnail ? 'yes' : 'no'}`);
+        // Extract duration del primer .video-info-box dentro de .video-info
+        const duration = $item.find('.video-info .video-info-box').first().text().trim();
+
+        console.log(`[TikTok Parse] Item ${index}: thumbnail=${thumbnail ? 'yes' : 'no'}, duration=${duration}`);
 
         // Buscar todos los enlaces de descarga dentro de este contenedor
         $item.find('a.dl-button.download_link.without_watermark').each((_, aEl) => {
@@ -147,6 +150,7 @@ function parseVideos(html) {
                 results.push({
                     downloadUrl,
                     thumbnail,
+                    duration,
                 });
             }
         });
