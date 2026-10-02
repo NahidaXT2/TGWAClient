@@ -12,6 +12,12 @@ function extractUsername(input) {
         return trimmed;
     }
 
+    // Si es una URL de video individual (contiene /video/), retornar la URL completa
+    if (trimmed.includes('/video/')) {
+        console.log(`[TikTok API] Detected single video URL: ${trimmed}`);
+        return trimmed;
+    }
+
     // Si es una URL de TikTok, extraer el username
     const tiktokUrlPatterns = [
         /tiktok\.com\/@([^\/\?]+)/,

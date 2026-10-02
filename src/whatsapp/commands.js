@@ -167,52 +167,68 @@ const COMMANDS = {
 
                 console.log(`[TikTok Command] Videos to send: ${videos.length}, Profile: ${profile.username}`);
 
-                // Limitar a 4 videos máximo
-                const MAX_VIDEOS = 4;
+                const MAX_VIDEOS = 12;
                 const videosToSend = videos.slice(0, MAX_VIDEOS);
 
                 console.log(`[TikTok Command] Sending ${videosToSend.length} videos (limited from ${videos.length})`);
 
-                // Enviar álbum nativo con Baileys 6.7.0
-                try {
-                    // Paso 1: Enviar mensaje de álbum para obtener albumParentKey
-                    const albumMsg = await sock.sendMessage(remoteJid, {
-                        album: {
-                            expectedImageCount: videosToSend.length,
-                        },
-                    });
-                    console.log(`[TikTok Command] Album message sent, albumParentKey: ${albumMsg.key.id}`);
+                const ALBUM_SIZE = 12;
+                const numAlbums = Math.ceil(videosToSend.length / ALBUM_SIZE);
 
-                    // Paso 2: Enviar cada imagen con el albumParentKey
-                    for (let i = 0; i < videosToSend.length; i++) {
-                        const video = videosToSend[i];
-                        console.log(`[TikTok Command] Sending image ${i + 1}/${videosToSend.length} with albumParentKey`);
+                for (let albumIndex = 0; albumIndex < numAlbums; albumIndex++) {
+                    const startIdx = albumIndex * ALBUM_SIZE;
+                    const endIdx = Math.min(startIdx + ALBUM_SIZE, videosToSend.length);
+                    const albumVideos = videosToSend.slice(startIdx, endIdx);
 
-                        try {
-                            await sock.sendMessage(remoteJid, {
-                                image: { url: video.thumbnail },
-                                caption: `${i + 1} - ${profile.username} - Duración: ${video.duration}`,
-                                albumParentKey: albumMsg.key,
-                            });
-                        } catch (err) {
-                            console.error(`[TikTok Command] Error sending image ${i + 1}: ${err.message}`);
+                    console.log(`[TikTok Command] Sending album ${albumIndex + 1}/${numAlbums} with ${albumVideos.length} videos`);
+
+                    try {
+                        // Paso 1: Enviar mensaje de álbum para obtener albumParentKey
+                        const albumMsg = await sock.sendMessage(remoteJid, {
+                            album: {
+                                expectedImageCount: albumVideos.length,
+                            },
+                        });
+                        console.log(`[TikTok Command] Album ${albumIndex + 1} message sent, albumParentKey: ${albumMsg.key.id}`);
+
+                        // Paso 2: Enviar cada imagen con el albumParentKey
+                        for (let i = 0; i < albumVideos.length; i++) {
+                            const video = albumVideos[i];
+                            const globalIndex = startIdx + i + 1; // Índice global 1-12
+                            console.log(`[TikTok Command] Sending image ${globalIndex}/${videosToSend.length} with albumParentKey`);
+
+                            try {
+                                await sock.sendMessage(remoteJid, {
+                                    image: { url: video.thumbnail },
+                                    caption: `${globalIndex} - ${profile.username} - Duración: ${video.duration}`,
+                                    albumParentKey: albumMsg.key,
+                                });
+                            } catch (err) {
+                                console.error(`[TikTok Command] Error sending image ${globalIndex}: ${err.message}`);
+                            }
+                        }
+
+                        console.log(`[TikTok Command] Album ${albumIndex + 1} sent successfully with ${albumVideos.length} images`);
+                    } catch (err) {
+                        console.error(`[TikTok Command] Error sending album ${albumIndex + 1}: ${err.message}`);
+                        // Fallback: enviar imágenes una por una si falla el álbum
+                        for (let i = 0; i < albumVideos.length; i++) {
+                            const video = albumVideos[i];
+                            const globalIndex = startIdx + i + 1;
+                            try {
+                                await sock.sendMessage(remoteJid, {
+                                    image: { url: video.thumbnail },
+                                    caption: `${globalIndex}`,
+                                });
+                            } catch (fallbackErr) {
+                                console.error(`[TikTok Command] Error sending image ${globalIndex} (fallback): ${fallbackErr.message}`);
+                            }
                         }
                     }
 
-                    console.log(`[TikTok Command] Album sent successfully with ${videosToSend.length} images`);
-                } catch (err) {
-                    console.error(`[TikTok Command] Error sending album: ${err.message}`);
-                    // Fallback: enviar imágenes una por una si falla el álbum
-                    for (let i = 0; i < videosToSend.length; i++) {
-                        const video = videosToSend[i];
-                        try {
-                            await sock.sendMessage(remoteJid, {
-                                image: { url: video.thumbnail },
-                                caption: `${i + 1}`,
-                            });
-                        } catch (fallbackErr) {
-                            console.error(`[TikTok Command] Error sending image ${i + 1} (fallback): ${fallbackErr.message}`);
-                        }
+                    // Delay entre álbumes para evitar spam
+                    if (albumIndex < numAlbums - 1) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
 

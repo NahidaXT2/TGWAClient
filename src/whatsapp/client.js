@@ -201,20 +201,30 @@ async function initWhatsApp() {
                         if (selectionEntry.type === 'format') {
                             const musicalData = selectionEntry.options;
                             try {
-                                console.log(`[WhatsApp] Enviando video formato ${selectedItem.format}`);
+                                console.log(`[WhatsApp] Enviando archivo formato ${selectedItem.format}`);
                                 console.log(`[WhatsApp] Download URL: ${selectedItem.url?.substring(0, 100)}...`);
 
                                 const caption = musicalData.description || `Formato: ${selectedItem.label}`;
 
-                                await wpp.sendMessage(remoteJid, {
-                                    video: { url: selectedItem.url },
-                                    caption,
-                                });
-                                console.log(`[WhatsApp] Video formato enviado (${selectedItem.format})`);
+                                // Si es MP3, enviar como audio
+                                if (selectedItem.format === 'mp3') {
+                                    await wpp.sendMessage(remoteJid, {
+                                        audio: { url: selectedItem.url },
+                                        mimetype: 'audio/mpeg',
+                                    });
+                                    console.log(`[WhatsApp] Audio MP3 enviado`);
+                                } else {
+                                    // De lo contrario, enviar como video
+                                    await wpp.sendMessage(remoteJid, {
+                                        video: { url: selectedItem.url },
+                                        caption,
+                                    });
+                                    console.log(`[WhatsApp] Video formato enviado (${selectedItem.format})`);
+                                }
                             } catch (err) {
-                                console.error(`ERROR [WhatsApp] Error enviando video formato: ${err.message}`);
+                                console.error(`ERROR [WhatsApp] Error enviando archivo formato: ${err.message}`);
                                 console.error(`ERROR [WhatsApp] Stack: ${err.stack}`);
-                                await wpp.sendMessage(remoteJid, { text: '❌ Error al enviar el video. Intenta nuevamente.' });
+                                await wpp.sendMessage(remoteJid, { text: '❌ Error al enviar el archivo. Intenta nuevamente.' });
                             }
                             continue;
                         }
