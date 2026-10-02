@@ -48,6 +48,11 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const WPP_CAPTCHA_TIMEOUT = parseInt(process.env.WPP_CAPTCHA_TIMEOUT, 10) || 30000; // 30s por defecto
 
 // ============================================================
+// Configuración — TikTok
+// ============================================================
+const WPP_TIKTOK_TIMEOUT = parseInt(process.env.WPP_TIKTOK_TIMEOUT, 10) || 60000; // 60s por defecto
+
+// ============================================================
 // Validación de entorno
 // ============================================================
 const requiredVars = ["API_ID", "API_HASH", "TELEGRAM_SESSION", "N8N_WEBHOOK_URL"];
@@ -90,6 +95,7 @@ module.exports = {
     WPP_SESSION_ID,
     WPP_ALLOWED_CHATS,
     WPP_CAPTCHA_TIMEOUT,
+    WPP_TIKTOK_TIMEOUT,
 
     // Supabase
     SUPABASE_URL,

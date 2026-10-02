@@ -14,11 +14,13 @@ const { maskJid } = require('../utils/privacy');
 const { COMMANDS, parseCommand } = require('./commands');
 const { processMessage } = require('./processor');
 const { pendingCaptchas, registerPendingCaptcha } = require('./captcha');
+const { pendingSelections, registerPendingSelection, clearPendingSelections } = require('./tiktok-selections');
 const {
     WPP_SESSION_PATH,
     WPP_SESSION_ID,
     WPP_ALLOWED_CHATS,
     WPP_CAPTCHA_TIMEOUT,
+    WPP_TIKTOK_TIMEOUT,
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY,
 } = require('../config');
@@ -170,6 +172,43 @@ async function initWhatsApp() {
                         continue;
                     }
 
+                    // Detectar respuestas a selecciones de videos TikTok
+                    const pendingForChat = Array.from(pendingSelections.entries())
+                        .find(([_, entry]) => entry.remoteJid === remoteJid);
+
+                    if (pendingForChat && text) {
+                        const [messageId, selectionEntry] = pendingForChat;
+
+                        // Validar que el remitente esta autorizado
+                        if (!WPP_ALLOWED_CHATS.includes(senderJid)) {
+                            console.log(`WARNING [WhatsApp] Respuesta de selección TikTok de cuenta no autorizada: ${maskJid(senderJid)}`);
+                            continue;
+                        }
+
+                        const selectedIndex = parseInt(text.trim(), 10);
+
+                        if (isNaN(selectedIndex) || selectedIndex < 1 || selectedIndex > selectionEntry.videos.length) {
+                            await wpp.sendMessage(remoteJid, { text: `❌ Número inválido. Por favor selecciona un número entre 1 y ${selectionEntry.videos.length}` });
+                            continue;
+                        }
+
+                        clearTimeout(selectionEntry.timeout);
+                        pendingSelections.delete(messageId);
+
+                        const selectedVideo = selectionEntry.videos[selectedIndex - 1];
+                        try {
+                            await wpp.sendMessage(remoteJid, {
+                                video: { url: selectedVideo.downloadUrl },
+                                caption: `Video ${selectedIndex} seleccionado`,
+                            });
+                            console.log(`[WhatsApp] Video TikTok enviado (${selectedIndex})`);
+                        } catch (err) {
+                            console.error(`ERROR [WhatsApp] Error enviando video TikTok: ${err.message}`);
+                            await wpp.sendMessage(remoteJid, { text: '❌ Error al enviar el video. Intenta nuevamente.' });
+                        }
+                        continue;
+                    }
+
                     // Procesar comandos
                     const cmd = parseCommand(text);
                     if (cmd) {
@@ -256,6 +295,13 @@ async function handleShutdown() {
     console.log('[WhatsApp] Cerrando cliente...');
 
     try {
+        clearPendingSelections();
+        console.log('[WhatsApp] Selecciones TikTok pendientes limpiadas');
+    } catch (error) {
+        console.error(`ERROR [WhatsApp] Error limpiando selecciones: ${error.message}`);
+    }
+
+    try {
         if (wppClient) {
             console.log('[WhatsApp] Cerrando cliente WhatsApp (SIN logout)...');
             try {
@@ -287,8 +333,11 @@ module.exports = {
     handleShutdown,
     pendingCaptchas,
     registerPendingCaptcha,
+    pendingSelections,
+    registerPendingSelection,
     WPP_ALLOWED_CHATS,
     WPP_CAPTCHA_TIMEOUT,
+    WPP_TIKTOK_TIMEOUT,
     supabase,
     WPP_SESSION_PATH,
     WPP_SESSION_ID,
