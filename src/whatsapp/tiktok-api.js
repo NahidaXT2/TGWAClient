@@ -41,9 +41,9 @@ function extractUsername(input) {
 }
 
 // ============================================================
-// Obtener videos de TikTok desde ssstik.io
+// Obtener videos de TikTok desde ssstik.io con reintentos
 // ============================================================
-async function fetchTikTokVideos(username) {
+async function fetchTikTokVideos(username, maxRetries = 3) {
     const url = 'https://ssstik.io/abc';
 
     const headers = {
@@ -78,27 +78,39 @@ async function fetchTikTokVideos(username) {
     data.append('tt', 'UmlZWXph');
     data.append('debug', 'ab=1&loc=PE&ip=161.132.54.231');
 
-    try {
-        console.log(`[TikTok API] Fetching videos for: ${username}`);
-        const response = await axios.post(url, data, {
-            headers,
-            params,
-            timeout: 30000,
-        });
+    let lastError = null;
 
-        console.log(`[TikTok API] Response status: ${response.status}`);
-        console.log(`[TikTok API] Response data length: ${response.data?.length || 0}`);
-        console.log(`[TikTok API] Response data preview: ${response.data?.substring(0, 200) || 'empty'}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            console.log(`[TikTok API] Fetching videos for: ${username} (attempt ${attempt}/${maxRetries})`);
+            const response = await axios.post(url, data, {
+                headers,
+                params,
+                timeout: 30000,
+            });
 
-        return response.data;
-    } catch (error) {
-        console.error(`[TikTok API] Error: ${error.message}`);
-        if (error.response) {
-            console.error(`[TikTok API] Status: ${error.response.status}`);
-            console.error(`[TikTok API] Data: ${error.response.data?.substring(0, 200) || 'empty'}`);
+            console.log(`[TikTok API] Response status: ${response.status}`);
+            console.log(`[TikTok API] Response data length: ${response.data?.length || 0}`);
+            console.log(`[TikTok API] Response data preview: ${response.data?.substring(0, 200) || 'empty'}`);
+
+            return response.data;
+        } catch (error) {
+            lastError = error;
+            console.error(`[TikTok API] Error (attempt ${attempt}/${maxRetries}): ${error.message}`);
+            if (error.response) {
+                console.error(`[TikTok API] Status: ${error.response.status}`);
+                console.error(`[TikTok API] Data: ${error.response.data?.substring(0, 200) || 'empty'}`);
+            }
+
+            if (attempt < maxRetries) {
+                const delay = attempt * 2000; // 2s, 4s, 6s
+                console.log(`[TikTok API] Retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
         }
-        throw new Error(`Error fetching TikTok videos: ${error.message}`);
     }
+
+    throw new Error(`Error fetching TikTok videos after ${maxRetries} attempts: ${lastError.message}`);
 }
 
 // ============================================================

@@ -53,10 +53,31 @@ const COMMANDS = {
                 await sock.sendMessage(remoteJid, { text: '🔍 Buscando videos...' });
 
                 const html = await fetchTikTokVideos(username);
-                const profile = parseProfileHeader(html);
-                const videos = parseVideos(html);
+
+                let profile = null;
+                let videos = [];
+                let lastParseError = null;
+
+                // Reintentar parseado hasta 3 veces
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        console.log(`[TikTok Command] Parsing attempt ${attempt}/3`);
+                        profile = parseProfileHeader(html);
+                        videos = parseVideos(html);
+                        break;
+                    } catch (err) {
+                        lastParseError = err;
+                        console.error(`[TikTok Command] Parse error (attempt ${attempt}/3): ${err.message}`);
+                        if (attempt < 3) {
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
+                    }
+                }
 
                 if (videos.length === 0) {
+                    if (lastParseError) {
+                        throw lastParseError;
+                    }
                     return '❌ No se encontraron videos para este perfil';
                 }
 
