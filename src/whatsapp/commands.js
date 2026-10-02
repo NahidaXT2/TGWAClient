@@ -49,6 +49,7 @@ const COMMANDS = {
             const username = extractUsername(input);
 
             try {
+                console.log(`[TikTok Command] Input: ${input}, Extracted username: ${username}`);
                 await sock.sendMessage(remoteJid, { text: '🔍 Buscando videos...' });
 
                 const html = await fetchTikTokVideos(username);
@@ -58,6 +59,8 @@ const COMMANDS = {
                     return '❌ No se encontraron videos para este perfil';
                 }
 
+                console.log(`[TikTok Command] Videos to send: ${videos.length}`);
+
                 // WhatsApp tiene límite de 10 imágenes por álbum
                 const MAX_ALBUM_SIZE = 10;
                 const albumChunks = [];
@@ -66,10 +69,14 @@ const COMMANDS = {
                     albumChunks.push(videos.slice(i, i + MAX_ALBUM_SIZE));
                 }
 
+                console.log(`[TikTok Command] Album chunks: ${albumChunks.length}`);
+
                 // Enviar cada chunk como un álbum
                 for (let chunkIndex = 0; chunkIndex < albumChunks.length; chunkIndex++) {
                     const chunk = albumChunks[chunkIndex];
                     const startIndex = chunkIndex * MAX_ALBUM_SIZE + 1;
+
+                    console.log(`[TikTok Command] Sending chunk ${chunkIndex + 1} with ${chunk.length} images`);
 
                     const albumItems = chunk.map((v, i) => ({
                         image: { url: v.thumbnail },
@@ -83,12 +90,15 @@ const COMMANDS = {
                 const selectionMessage = `📹 Se encontraron ${videos.length} videos.\n\nResponde con el número del video que quieres (1-${videos.length})`;
                 const msg = await sock.sendMessage(remoteJid, { text: selectionMessage });
 
+                console.log(`[TikTok Command] Selection message ID: ${msg.key.id}`);
+
                 // Registrar selección pendiente
                 registerPendingSelection(msg.key.id, videos, remoteJid, WPP_TIKTOK_TIMEOUT);
 
                 return null; // Ya enviamos mensajes manualmente
             } catch (error) {
-                console.error(`ERROR [TikTok] ${error.message}`);
+                console.error(`ERROR [TikTok Command] ${error.message}`);
+                console.error(`ERROR [TikTok Command] Stack: ${error.stack}`);
                 return `❌ Error: ${error.message}`;
             }
         },

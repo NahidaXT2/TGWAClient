@@ -79,14 +79,24 @@ async function fetchTikTokVideos(username) {
     data.append('debug', 'ab=1&loc=PE&ip=161.132.54.231');
 
     try {
+        console.log(`[TikTok API] Fetching videos for: ${username}`);
         const response = await axios.post(url, data, {
             headers,
             params,
             timeout: 30000,
         });
 
+        console.log(`[TikTok API] Response status: ${response.status}`);
+        console.log(`[TikTok API] Response data length: ${response.data?.length || 0}`);
+        console.log(`[TikTok API] Response data preview: ${response.data?.substring(0, 200) || 'empty'}`);
+
         return response.data;
     } catch (error) {
+        console.error(`[TikTok API] Error: ${error.message}`);
+        if (error.response) {
+            console.error(`[TikTok API] Status: ${error.response.status}`);
+            console.error(`[TikTok API] Data: ${error.response.data?.substring(0, 200) || 'empty'}`);
+        }
         throw new Error(`Error fetching TikTok videos: ${error.message}`);
     }
 }
@@ -95,16 +105,28 @@ async function fetchTikTokVideos(username) {
 // Parsear HTML para extraer videos y thumbnails
 // ============================================================
 function parseVideos(html) {
+    console.log(`[TikTok Parse] Parsing HTML, length: ${html?.length || 0}`);
+
     const $ = cheerio.load(html);
     const results = [];
 
     // Verificar si el perfil no existe
     if (html.includes('PROFILE_LINK_NOT_EXISTING')) {
+        console.log('[TikTok Parse] Profile not existing');
         throw new Error('El perfil de TikTok no existe o no es público');
     }
 
+    // Verificar si hay error de CAPTCHA u otros
+    if (html.includes('captcha') || html.includes('CAPTCHA')) {
+        console.log('[TikTok Parse] CAPTCHA detected');
+        throw new Error('Se requiere CAPTCHA. Intenta nuevamente más tarde.');
+    }
+
+    const videoItems = $('.custom-video-item');
+    console.log(`[TikTok Parse] Found ${videoItems.length} video items`);
+
     // Recorrer cada contenedor de video
-    $('.custom-video-item').each((index, element) => {
+    videoItems.each((index, element) => {
         const $item = $(element);
 
         // Extract thumbnail URL: intenta obtenerla del style="background-image: url(...)" o del data-url
@@ -112,9 +134,13 @@ function parseVideos(html) {
         const bgMatch = styleAttr.match(/url\((['"]?)(.*?)\1\)/);
         const thumbnail = bgMatch ? bgMatch[2] : null;
 
+        console.log(`[TikTok Parse] Item ${index}: thumbnail=${thumbnail ? 'yes' : 'no'}`);
+
         // Buscar todos los enlaces de descarga dentro de este contenedor
         $item.find('a.dl-button.download_link.without_watermark').each((_, aEl) => {
             const downloadUrl = $(aEl).attr('href');
+
+            console.log(`[TikTok Parse] Download URL: ${downloadUrl?.substring(0, 50) || 'null'}...`);
 
             // Filtrar solo las URLs de descarga que contengan "tiktokcdn"
             if (downloadUrl && downloadUrl.includes('tiktokcdn')) {
@@ -126,6 +152,7 @@ function parseVideos(html) {
         });
     });
 
+    console.log(`[TikTok Parse] Total videos found: ${results.length}`);
     return results;
 }
 

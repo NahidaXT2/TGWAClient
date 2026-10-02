@@ -197,6 +197,10 @@ async function initWhatsApp() {
 
                         const selectedVideo = selectionEntry.videos[selectedIndex - 1];
                         try {
+                            console.log(`[WhatsApp] Enviando video TikTok ${selectedIndex}`);
+                            console.log(`[WhatsApp] Download URL: ${selectedVideo.downloadUrl?.substring(0, 100)}...`);
+                            console.log(`[WhatsApp] Thumbnail: ${selectedVideo.thumbnail?.substring(0, 100) || 'null'}...`);
+
                             await wpp.sendMessage(remoteJid, {
                                 video: { url: selectedVideo.downloadUrl },
                                 caption: `Video ${selectedIndex} seleccionado`,
@@ -204,6 +208,7 @@ async function initWhatsApp() {
                             console.log(`[WhatsApp] Video TikTok enviado (${selectedIndex})`);
                         } catch (err) {
                             console.error(`ERROR [WhatsApp] Error enviando video TikTok: ${err.message}`);
+                            console.error(`ERROR [WhatsApp] Stack: ${err.stack}`);
                             await wpp.sendMessage(remoteJid, { text: '❌ Error al enviar el video. Intenta nuevamente.' });
                         }
                         continue;
