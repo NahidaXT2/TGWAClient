@@ -196,6 +196,7 @@ async function initWhatsApp() {
                         pendingSelections.delete(messageId);
 
                         const selectedVideo = selectionEntry.videos[selectedIndex - 1];
+                        const profile = selectionEntry.profile;
                         try {
                             console.log(`[WhatsApp] Enviando video TikTok ${selectedIndex}`);
                             console.log(`[WhatsApp] Download URL: ${selectedVideo.downloadUrl?.substring(0, 100)}...`);
@@ -203,7 +204,7 @@ async function initWhatsApp() {
 
                             await wpp.sendMessage(remoteJid, {
                                 video: { url: selectedVideo.downloadUrl },
-                                caption: `Video ${selectedIndex} seleccionado`,
+                                caption: profile ? `Video ${selectedIndex} de ${profile.username}` : `Video ${selectedIndex} seleccionado`,
                             });
                             console.log(`[WhatsApp] Video TikTok enviado (${selectedIndex})`);
                         } catch (err) {

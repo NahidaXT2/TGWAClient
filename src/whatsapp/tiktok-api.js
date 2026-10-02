@@ -102,6 +102,31 @@ async function fetchTikTokVideos(username) {
 }
 
 // ============================================================
+// Parsear HTML para extraer información del perfil
+// ============================================================
+function parseProfileHeader(html) {
+    console.log(`[TikTok Parse] Parsing profile header`);
+
+    const $ = cheerio.load(html);
+    const header = $('.profile-header');
+
+    const avatarStyle = header.find('.avatar').attr('style') || '';
+    const avatarMatch = avatarStyle.match(/url\(['"]?([^'"]+)['"]?\)/);
+    const avatar = avatarMatch ? avatarMatch[1] : null;
+
+    const username = header.find('h1.pure-u-1').text().trim();
+    const postsInfo = header.find('.posts-count').text().trim();
+
+    console.log(`[TikTok Parse] Profile: username=${username}, avatar=${avatar ? 'yes' : 'no'}`);
+
+    return {
+        avatar,
+        username,
+        postsInfo,
+    };
+}
+
+// ============================================================
 // Parsear HTML para extraer videos y thumbnails
 // ============================================================
 function parseVideos(html) {
@@ -164,4 +189,5 @@ module.exports = {
     extractUsername,
     fetchTikTokVideos,
     parseVideos,
+    parseProfileHeader,
 };

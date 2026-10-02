@@ -1,7 +1,7 @@
 // ============================================================
 // Comandos WhatsApp
 // ============================================================
-const { extractUsername, fetchTikTokVideos, parseVideos } = require('./tiktok-api');
+const { extractUsername, fetchTikTokVideos, parseVideos, parseProfileHeader } = require('./tiktok-api');
 const { registerPendingSelection } = require('./tiktok-selections');
 const { WPP_TIKTOK_TIMEOUT } = require('../config');
 const COMMANDS = {
@@ -53,13 +53,14 @@ const COMMANDS = {
                 await sock.sendMessage(remoteJid, { text: '🔍 Buscando videos...' });
 
                 const html = await fetchTikTokVideos(username);
+                const profile = parseProfileHeader(html);
                 const videos = parseVideos(html);
 
                 if (videos.length === 0) {
                     return '❌ No se encontraron videos para este perfil';
                 }
 
-                console.log(`[TikTok Command] Videos to send: ${videos.length}`);
+                console.log(`[TikTok Command] Videos to send: ${videos.length}, Profile: ${profile.username}`);
 
                 // Limitar a 4 videos máximo
                 const MAX_VIDEOS = 4;
@@ -85,7 +86,7 @@ const COMMANDS = {
                         try {
                             await sock.sendMessage(remoteJid, {
                                 image: { url: video.thumbnail },
-                                caption: `${i + 1} - Duración: ${video.duration}`,
+                                caption: `${i + 1} - ${profile.username} - Duración: ${video.duration}`,
                                 albumParentKey: albumMsg.key,
                             });
                         } catch (err) {
@@ -116,8 +117,8 @@ const COMMANDS = {
 
                 console.log(`[TikTok Command] Selection message ID: ${msg.key.id}`);
 
-                // Registrar selección pendiente (con los videos limitados)
-                registerPendingSelection(msg.key.id, videosToSend, remoteJid, WPP_TIKTOK_TIMEOUT);
+                // Registrar selección pendiente (con los videos limitados y perfil)
+                registerPendingSelection(msg.key.id, videosToSend, remoteJid, WPP_TIKTOK_TIMEOUT, profile);
 
                 return null; // Ya enviamos mensajes manualmente
             } catch (error) {
